@@ -1,5 +1,6 @@
 use anyhow::Result;
 use camino::Utf8PathBuf;
+use clap::{ArgEnum, Parser};
 use fst::raw::{Fst, Output};
 use grep_cli::{self, stdout};
 use regex::bytes::Regex;
@@ -13,7 +14,7 @@ use std::io::{self, BufReader, Read, Write};
 use termcolor::ColorChoice;
 
 const BUFFERSIZE: usize = 64 * 1024;
-const SENTINEL: u8 = b"0"[0];
+const SENTINEL: u8 = 0;
 
 // via https://github.com/sstadick/crabz/blob/main/src/main.rs#L82
 /// Get a buffered input reader from stdin or a file
@@ -31,6 +32,7 @@ fn get_input(path: Option<Utf8PathBuf>) -> Result<Box<dyn Read + Send + 'static>
     Ok(reader)
 }
 
+// adapted from https://github.com/BurntSushi/fst/pull/104/files
 #[inline]
 fn find_longest_prefix_sentinel<D: AsRef<[u8]>>(
     fst: &Fst<D>,
@@ -69,7 +71,44 @@ fn find_longest_prefix_sentinel<D: AsRef<[u8]>>(
     last_match
 }
 
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    /// Show only nonempty parts of lines that match
+    #[clap(short, long)]
+    only_matching: bool,
+
+    /// Use markers to highlight the matching strings
+    #[clap(short = 'C', long, arg_enum, default_value_t = ArgsColorChoice::Auto)]
+    color: ArgsColorChoice,
+
+    /// Specify the format of the IP address decoration. Use the --list-templates option
+    /// to see which fields are available. Field names are enclosed in {}, for example
+    /// "{field1} any fixed string {field2} & {field3}"
+    #[clap(short, long)]
+    template: Option<String>,
+
+    /// Specify fst db to use
+    #[clap(short = 'f', value_name = "FST", value_hint = clap::ValueHint::FilePath)]
+    fst: Utf8PathBuf,
+
+    /// Input file(s) to process. Leave empty or use "-" to read from stdin
+    #[clap(value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+    input: Vec<Utf8PathBuf>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, ArgEnum)]
+enum ArgsColorChoice {
+    Always,
+    Never,
+    Auto,
+}
+
+
+
+
 fn main() -> Result<()> {
+    let mut args = Args::parse();
     run_onlymatching()
 }
 

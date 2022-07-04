@@ -12,6 +12,7 @@ codegen-units = 1
 [dependencies]
 anyhow = "1.0.57"
 camino = "1.0"
+clap = { version = "3.2", features = ["derive", "cargo"] }
 fst = "0.4"
 grep-cli = "0.1.6"
 regex = "1.5"
