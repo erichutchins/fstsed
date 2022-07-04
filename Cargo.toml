@@ -15,6 +15,7 @@ camino = "1.0"
 clap = { version = "3.2", features = ["derive", "cargo"] }
 fst = "0.4"
 grep-cli = "0.1.6"
+memmap2 = "0.5.4"
 regex = "1.5"
 ripline = "0.1.0"
 termcolor = "1.1.2"

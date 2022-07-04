@@ -1,8 +1,9 @@
-use anyhow::Result;
+use anyhow::{Error, Result};
 use camino::Utf8PathBuf;
 use clap::{ArgEnum, Parser};
 use fst::raw::{Fst, Output};
 use grep_cli::{self, stdout};
+use memmap2::Mmap;
 use regex::bytes::Regex;
 use ripline::{
     line_buffer::{LineBufferBuilder, LineBufferReader},
@@ -30,6 +31,13 @@ fn get_input(path: Option<Utf8PathBuf>) -> Result<Box<dyn Read + Send + 'static>
         None => Box::new(BufReader::with_capacity(BUFFERSIZE, io::stdin())),
     };
     Ok(reader)
+}
+
+// from https://github.com/BurntSushi/fst/blob/master/fst-bin/src/util.rs
+unsafe fn mmap_fst(path: Utf8PathBuf) -> Result<Fst<Mmap>, Error> {
+    let mmap = Mmap::map(&File::open(path)?)?;
+    let fst = Fst::new(mmap)?;
+    Ok(fst)
 }
 
 // adapted from https://github.com/BurntSushi/fst/pull/104/files
@@ -103,9 +111,6 @@ enum ArgsColorChoice {
     Never,
     Auto,
 }
-
-
-
 
 fn main() -> Result<()> {
     let mut args = Args::parse();
