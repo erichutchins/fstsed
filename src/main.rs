@@ -12,10 +12,23 @@ use ripline::{
 };
 use std::fs::File;
 use std::io::{self, BufReader, Read, Write};
+use std::process::exit;
 use termcolor::ColorChoice;
 
 const BUFFERSIZE: usize = 64 * 1024;
 const SENTINEL: u8 = 0;
+
+// via https://github.com/sstadick/hck/blob/master/src/main.rs#L90
+/// Check if err is a broken pipe.
+#[inline]
+fn is_broken_pipe(err: &Error) -> bool {
+    if let Some(io_err) = err.root_cause().downcast_ref::<io::Error>() {
+        if io_err.kind() == io::ErrorKind::BrokenPipe {
+            return true;
+        }
+    }
+    false
+}
 
 // via https://github.com/sstadick/crabz/blob/main/src/main.rs#L82
 /// Get a buffered input reader from stdin or a file
@@ -34,6 +47,7 @@ fn get_input(path: Option<Utf8PathBuf>) -> Result<Box<dyn Read + Send + 'static>
 }
 
 // from https://github.com/BurntSushi/fst/blob/master/fst-bin/src/util.rs
+#[inline]
 unsafe fn mmap_fst(path: Utf8PathBuf) -> Result<Fst<Mmap>, Error> {
     let mmap = Mmap::map(&File::open(path)?)?;
     let fst = Fst::new(mmap)?;
@@ -90,12 +104,6 @@ struct Args {
     #[clap(short = 'C', long, arg_enum, default_value_t = ArgsColorChoice::Auto)]
     color: ArgsColorChoice,
 
-    /// Specify the format of the IP address decoration. Use the --list-templates option
-    /// to see which fields are available. Field names are enclosed in {}, for example
-    /// "{field1} any fixed string {field2} & {field3}"
-    #[clap(short, long)]
-    template: Option<String>,
-
     /// Specify fst db to use
     #[clap(short = 'f', value_name = "FST", value_hint = clap::ValueHint::FilePath)]
     fst: Utf8PathBuf,
@@ -114,11 +122,44 @@ enum ArgsColorChoice {
 
 fn main() -> Result<()> {
     let mut args = Args::parse();
-    run_onlymatching()
+
+    // if no files specified, add stdin
+    if args.input.is_empty() {
+        args.input.push(Utf8PathBuf::from("-"));
+    }
+
+    // determine appropriate colormode. auto simply
+    // tests if stdout is a tty (if so, then yes color)
+    // or otherwise don't color if it's to a file or another pipe
+    let colormode = match args.color {
+        ArgsColorChoice::Auto => {
+            if grep_cli::is_tty_stdout() {
+                ColorChoice::Always
+            } else {
+                ColorChoice::Never
+            }
+        }
+        ArgsColorChoice::Always => ColorChoice::Always,
+        ArgsColorChoice::Never => ColorChoice::Never,
+    };
+
+    // invoke the command!
+    if let Err(e) = if args.only_matching {
+        run_onlymatching(args, colormode)
+    } else {
+        run(args, colormode)
+    } {
+        // safely ignore broken pipes, e.g. head
+        if is_broken_pipe(&e) {
+            exit(0);
+        }
+        return Err(e);
+    }
+    Ok(())
 }
 
 #[inline]
-fn run() -> Result<()> {
+fn run(args: Args, colormode: ColorChoice) -> Result<()> {
     let fst = Fst::from_iter_map(vec![
         ("a0one", 1),
         ("ab0two", 2),
@@ -186,7 +227,7 @@ fn run() -> Result<()> {
 }
 
 #[inline]
-fn run_onlymatching() -> Result<()> {
+fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
     let fst = Fst::from_iter_map(vec![
         ("a0one", 1),
         ("ab0two", 2),
