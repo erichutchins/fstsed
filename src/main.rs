@@ -174,53 +174,56 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
     let mut out = stdout(ColorChoice::Auto);
     let re = Regex::new(r"\W").unwrap();
 
-    let reader = get_input(None)?;
-    let terminator = LineTerminator::byte(b'\n');
-    let mut line_buffer = LineBufferBuilder::new().build();
-    let mut lb_reader = LineBufferReader::new(reader, &mut line_buffer);
+    for path in args.input {
+        let reader = get_input(Some(path))?;
+        let terminator = LineTerminator::byte(b'\n');
+        let mut line_buffer = LineBufferBuilder::new().build();
+        let mut lb_reader = LineBufferReader::new(reader, &mut line_buffer);
 
-    // line reader
-    while lb_reader.fill()? {
-        let lines = LineIter::new(terminator.as_byte(), lb_reader.buffer());
-        for mut input in lines {
-            // process each line
-            while !input.is_empty() {
-                match find_longest_prefix_sentinel(&fst, input) {
-                    Some((len, value)) => {
-                        // we have a match! len is the size of the input buffer that matched
-                        // a key in our fst. value is the corresponding remainder of the key0value
-                        // concatenated string in our fst
-                        if len != 0 && (len == input.len() || re.is_match(&input[len..len + 1])) {
-                            out.write_all(b"<")?;
-                            out.write_all(&input[..len])?;
-                            out.write_all(b"|")?;
-                            out.write_all(value.as_bytes())?;
-                            out.write_all(b">")?;
-                        } else {
-                            // our match landed in the middle of a word
-                            out.write_all(&input[..len])?;
+        // line reader
+        while lb_reader.fill()? {
+            let lines = LineIter::new(terminator.as_byte(), lb_reader.buffer());
+            for mut input in lines {
+                // process each line
+                while !input.is_empty() {
+                    match find_longest_prefix_sentinel(&fst, input) {
+                        Some((len, value)) => {
+                            // we have a match! len is the size of the input buffer that matched
+                            // a key in our fst. value is the corresponding remainder of the key0value
+                            // concatenated string in our fst
+                            if len != 0 && (len == input.len() || re.is_match(&input[len..len + 1]))
+                            {
+                                out.write_all(b"<")?;
+                                out.write_all(&input[..len])?;
+                                out.write_all(b"|")?;
+                                out.write_all(value.as_bytes())?;
+                                out.write_all(b">")?;
+                            } else {
+                                // our match landed in the middle of a word
+                                out.write_all(&input[..len])?;
+                            }
+                            // advance the line buffer
+                            input = &input[len..];
                         }
-                        // advance the line buffer
-                        input = &input[len..];
-                    }
-                    None => {
-                        // no match, so advance the line buffer to the next
-                        // word boundary and search again
-                        if let Some(nextword) = re.find(input) {
-                            out.write_all(&input[..nextword.start() + 1])?;
-                            input = &input[nextword.start() + 1..];
-                            continue;
-                        } else {
-                            // no more words, so just print remainder of the line
-                            out.write_all(input)?;
-                            break;
+                        None => {
+                            // no match, so advance the line buffer to the next
+                            // word boundary and search again
+                            if let Some(nextword) = re.find(input) {
+                                out.write_all(&input[..nextword.start() + 1])?;
+                                input = &input[nextword.start() + 1..];
+                                continue;
+                            } else {
+                                // no more words, so just print remainder of the line
+                                out.write_all(input)?;
+                                break;
+                            }
                         }
-                    }
-                }; // match
-            } // while
-        } // for
-        lb_reader.consume_all();
-    }
+                    }; // match
+                } // while input
+            } // for each line
+            lb_reader.consume_all();
+        } // while lbreader
+    } // for path
 
     out.flush()?;
     Ok(())
