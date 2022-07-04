@@ -1,0 +1,19 @@
+[package]
+name = "fstsed"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+[dependencies]
+anyhow = "1.0.57"
+camino = "1.0"
+fst = "0.4"
+grep-cli = "0.1.6"
+regex = "1.5"
+ripline = "0.1.0"
+termcolor = "1.1.2"
