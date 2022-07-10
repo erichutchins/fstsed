@@ -84,7 +84,7 @@ fn find_longest_prefix_sentinel<D: AsRef<[u8]>>(
                         break;
                     }
                 }
-                last_match = Some((i + 1, String::from_utf8(bytes).unwrap()));
+                last_match = Some((i + 1, unsafe { String::from_utf8_unchecked(bytes) }));
             }
         } else {
             return last_match;
@@ -160,16 +160,7 @@ fn main() -> Result<()> {
 
 #[inline]
 fn run(args: Args, colormode: ColorChoice) -> Result<()> {
-    let fst = Fst::from_iter_map(vec![
-        ("a0one", 1),
-        ("ab0two", 2),
-        ("abc0three", 3),
-        ("abc0uni", 6),
-        ("bc0four", 4),
-        ("hello world0multi-word test", 7),
-        ("uvwxyz0five", 5),
-    ])
-    .unwrap();
+    let fst = unsafe { mmap_fst(args.fst).unwrap() };
 
     let mut out = stdout(ColorChoice::Auto);
     let re = Regex::new(r"\W").unwrap();
@@ -187,6 +178,19 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                 // process each line
                 while !input.is_empty() {
                     match find_longest_prefix_sentinel(&fst, input) {
+                        None => {
+                            // no match, so advance the line buffer to the next
+                            // word boundary and search again
+                            if let Some(nextword) = re.find(input) {
+                                out.write_all(&input[..nextword.start() + 1])?;
+                                input = &input[nextword.start() + 1..];
+                                continue;
+                            } else {
+                                // no more words, so just print remainder of the line
+                                out.write_all(input)?;
+                                break;
+                            }
+                        }
                         Some((len, value)) => {
                             // we have a match! len is the size of the input buffer that matched
                             // a key in our fst. value is the corresponding remainder of the key0value
@@ -205,25 +209,12 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                             // advance the line buffer
                             input = &input[len..];
                         }
-                        None => {
-                            // no match, so advance the line buffer to the next
-                            // word boundary and search again
-                            if let Some(nextword) = re.find(input) {
-                                out.write_all(&input[..nextword.start() + 1])?;
-                                input = &input[nextword.start() + 1..];
-                                continue;
-                            } else {
-                                // no more words, so just print remainder of the line
-                                out.write_all(input)?;
-                                break;
-                            }
-                        }
                     }; // match
                 } // while input
             } // for each line
             lb_reader.consume_all();
         } // while lbreader
-    } // for path
+    } // for each path
 
     out.flush()?;
     Ok(())
