@@ -15,6 +15,8 @@ use std::io::{self, BufReader, Read, Write};
 use std::process::exit;
 use termcolor::ColorChoice;
 
+pub mod fstsed;
+
 const BUFFERSIZE: usize = 64 * 1024;
 const SENTINEL: u8 = 0;
 
@@ -107,6 +109,16 @@ struct Args {
     /// Specify fst db to use
     #[clap(short = 'f', value_name = "FST", value_hint = clap::ValueHint::FilePath)]
     fst: Utf8PathBuf,
+
+    /// Specify the format of the fstsed match decoration. Field names are enclosed in {},
+    /// for example "{field1} any fixed string {field2} & {field3}"
+    #[clap(short, long)]
+    template: Option<String>,
+
+    /// Specify json input. Fstsed will unescape json strings before searching and ensure
+    /// output is json-safe
+    #[clap(short, long)]
+    json: bool,
 
     /// Input file(s) to process. Leave empty or use "-" to read from stdin
     #[clap(value_name = "FILE", value_hint = clap::ValueHint::FilePath)]

@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [profile.release]
+debug = true
 lto = "fat"
 codegen-units = 1
 
@@ -16,6 +17,8 @@ clap = { version = "3.2", features = ["derive", "cargo"] }
 fst = "0.4"
 grep-cli = "0.1.6"
 memmap2 = "0.5.4"
+microtemplate = "1.0.3"
 regex = "1.5"
 ripline = "0.1.0"
+serde_json = "1.0.82"
 termcolor = "1.1.2"
