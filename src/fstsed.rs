@@ -1,8 +1,10 @@
 use anyhow::{Error, Result};
 use camino::Utf8PathBuf;
 use fst::raw::{Fst, Output};
+use lazy_static::lazy_static;
 use memmap2::Mmap;
 use microtemplate::{render, Context};
+use regex::bytes::Regex;
 use serde_json::Value;
 use std::fs::File;
 use termcolor::ColorChoice;
@@ -16,19 +18,15 @@ struct FstMatch<'a> {
 }
 
 impl<'a> FstMatch<'a> {
-    pub fn new(key: &'a [u8], value: &'a [u8]) -> Self {
+    pub fn new(key: &'a [u8], value: &'a [u8], parse_value: bool) -> Self {
         Self {
             key,
             value,
-            jsonvalue: None,
-        }
-    }
-
-    pub fn new_with_parsed_value(key: &'a [u8], value: &'a [u8]) -> Self {
-        Self {
-            key,
-            value,
-            jsonvalue: Some(serde_json::from_slice(value).unwrap()),
+            jsonvalue: if parse_value {
+                Some(serde_json::from_slice(value).unwrap_or_else(|_| Value::default()))
+            } else {
+                None
+            },
         }
     }
 }
@@ -96,11 +94,11 @@ impl FstSed {
 
     #[inline]
     pub fn render_match(&self) -> String {
-        let lastmatch = if self.has_json_keys {
-            FstMatch::new_with_parsed_value(self.keycache.as_slice(), self.valuecache.as_slice())
-        } else {
-            FstMatch::new(self.keycache.as_slice(), self.valuecache.as_slice())
-        };
+        let lastmatch = FstMatch::new(
+            self.keycache.as_slice(),
+            self.valuecache.as_slice(),
+            self.has_json_keys,
+        );
         render(&self.template, lastmatch)
     }
 
@@ -110,6 +108,10 @@ impl FstSed {
         // has to be borrowed mutable so we can keep internal cache up to date
         self.keycache.clear();
         self.valuecache.clear();
+
+        lazy_static! {
+            static ref RE_NONWORD: Regex = Regex::new(r"\W").unwrap();
+        }
 
         let mut node = self.fst.root();
         let mut out = Output::zero();
@@ -121,23 +123,25 @@ impl FstSed {
                 out = out.cat(t.out);
 
                 if let Some(sentinel_index) = node.find_input(SENTINEL) {
-                    let sentinel = node.transition(sentinel_index);
-                    let mut snode = self.fst.node(sentinel.addr);
-                    //let mut bytes = vec![];
-                    while !snode.is_final() {
-                        if let Some(t) = snode.transitions().next() {
-                            // after the sentinel, we should not have any more
-                            // branching in the fst, so we just grab the first transition
-                            self.valuecache.push(t.inp);
-                            snode = self.fst.node(t.addr);
-                        } else {
-                            // somehow ran out of nodes!
-                            break;
+                    // validate candidate match has nonword boundary char next
+                    if i == value.len() - 1 || RE_NONWORD.is_match(&value[i + 1..i + 2]) {
+                        let sentinel = node.transition(sentinel_index);
+                        let mut snode = self.fst.node(sentinel.addr);
+                        while !snode.is_final() {
+                            if let Some(t) = snode.transitions().next() {
+                                // after the sentinel, we should not have any more
+                                // branching in the fst, so we just grab the first transition
+                                self.valuecache.push(t.inp);
+                                snode = self.fst.node(t.addr);
+                            } else {
+                                // somehow ran out of nodes!
+                                break;
+                            }
                         }
+
+                        last_match = Some(i + 1);
+                        self.keycache.extend_from_slice(&value[..i + 1]);
                     }
-                    //last_match = Some((i + 1, unsafe { String::from_utf8_unchecked(bytes) }));
-                    last_match = Some(i + 1);
-                    self.keycache.extend_from_slice(&value[..i + 1]);
                 }
             } else {
                 return last_match;
