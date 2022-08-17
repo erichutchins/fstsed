@@ -4,6 +4,8 @@ use fst::raw::{Fst, Output};
 use lazy_static::lazy_static;
 use memmap2::Mmap;
 use microtemplate::{render, Context};
+use regex::bytes::Matches;
+use regex::bytes::Match;
 use regex::bytes::Regex;
 use serde_json::Value;
 use std::fs::File;
@@ -11,17 +13,30 @@ use termcolor::ColorChoice;
 
 const SENTINEL: u8 = 0;
 
-struct FstMatch<'a> {
-    key: &'a [u8],
-    value: &'a [u8],
+lazy_static! {
+    static ref RE_NONWORD_OR_START: Regex = Regex::new(r"(?i-u)^|\W").unwrap();
+}
+
+/// FstMatch represents a single match of a fst key in a haystack
+/// with its corresponding value from the fst.
+///
+/// The lifetime parameter `'a` refers to the lifetime of the haystack text.
+/// The lifetime parameter `'f` refers to the lifetime of the fstsed object holding cached matches.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FstMatch<'f> {
+    //start: usize,
+    key: &'f [u8],
+    value: &'f [u8],
+    template: &'f str,
     jsonvalue: Option<Value>,
 }
 
-impl<'a> FstMatch<'a> {
-    pub fn new(key: &'a [u8], value: &'a [u8], parse_value: bool) -> Self {
+impl<'f> FstMatch<'f> {
+    pub fn new(key: &'f [u8], value: &'f [u8], template: &'f str, parse_value: bool) -> Self {
         Self {
             key,
             value,
+            template,
             jsonvalue: if parse_value {
                 Some(serde_json::from_slice(value).unwrap_or_else(|_| Value::default()))
             } else {
@@ -29,9 +44,13 @@ impl<'a> FstMatch<'a> {
             },
         }
     }
+
+    pub fn render(&self) -> String {
+        render(self.template, self)
+    }
 }
 
-impl Context for FstMatch<'_> {
+impl Context for &FstMatch<'_> {
     fn get_field(&self, field_name: &str) -> &str {
         match field_name {
             "key" => unsafe { std::str::from_utf8_unchecked(self.key) },
@@ -46,12 +65,45 @@ impl Context for FstMatch<'_> {
     }
 }
 
+pub struct FstMatches<'f, 'a> {
+    fstsed: &'f mut FstSed,
+    haystack: &'a [u8],
+    reiter: Matches<'f, 'a>,
+}
+
+impl<'f, 'a> FstMatches<'f, 'a> {
+    pub fn new(fstsed: &'f mut FstSed, haystack: &'a [u8]) -> Self {
+        Self {
+            fstsed,
+            haystack,
+            reiter: RE_NONWORD_OR_START.find_iter(haystack),
+        }
+    }
+}
+
+impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
+    type Item = Match<'a>;
+    //type Item = usize;
+
+    //fn next(&mut self) -> Option<usize> {
+    fn next(&mut self) -> Option<Match<'a>> {
+        let mut m = self.reiter.next();
+        while m.is_some() && self.fstsed
+                .longest_match_at(self.haystack, m.unwrap().start())
+                .is_none() {
+            m = self.reiter.next();
+        }
+        m         
+    }
+}
+
 pub struct FstSed {
     fst: Fst<Mmap>,
     pub color: ColorChoice,
     pub template: String,
     keycache: Vec<u8>,
     valuecache: Vec<u8>,
+    startcache: usize,
     has_json_keys: bool,
 }
 
@@ -70,7 +122,7 @@ fn test_for_json_keys(template: &str) -> bool {
         .any(|c| !(c.starts_with("key}") || c.starts_with("value}")))
 }
 
-impl FstSed {
+impl<'a> FstSed {
     pub fn new(fstpath: Utf8PathBuf, user_template: Option<String>, color: ColorChoice) -> Self {
         let mut template = user_template.unwrap_or_else(|| "<{key}|{value}>".to_string());
         let has_json_keys = test_for_json_keys(&template);
@@ -88,34 +140,37 @@ impl FstSed {
             template,
             keycache: Vec::with_capacity(256),
             valuecache: Vec::with_capacity(2048),
+            startcache: 0,
             has_json_keys,
         }
     }
 
     #[inline]
-    pub fn render_match(&self) -> String {
-        let lastmatch = FstMatch::new(
+    pub fn get_match<'f> (&'f self) -> FstMatch<'f> {
+        FstMatch::<'f>::new(
             self.keycache.as_slice(),
             self.valuecache.as_slice(),
+            &self.template,
             self.has_json_keys,
-        );
-        render(&self.template, lastmatch)
+        )
     }
 
     // adapted from https://github.com/BurntSushi/fst/pull/104/files
     #[inline]
-    pub fn longest_match(&mut self, value: &[u8]) -> Option<usize> {
-        // has to be borrowed mutable so we can keep internal cache up to date
+    pub fn longest_match_at(&mut self, text: &'a [u8], start: usize) -> Option<usize> {
+        // self has to be borrowed mutable so we can keep internal cache up to date
         self.keycache.clear();
         self.valuecache.clear();
+        self.startcache = start;
 
         lazy_static! {
-            static ref RE_NONWORD: Regex = Regex::new(r"\W").unwrap();
+            static ref RE_NONWORD: Regex = Regex::new(r"(?i-u)\W").unwrap();
         }
 
         let mut node = self.fst.root();
         let mut out = Output::zero();
         let mut last_match = None;
+        let value = &text[start..];
         for (i, &b) in value.iter().enumerate() {
             if let Some(trans_index) = node.find_input(b) {
                 let t = node.transition(trans_index);
@@ -148,5 +203,10 @@ impl FstSed {
             }
         }
         last_match
+    }
+
+    #[inline]
+    pub fn longest_match(&mut self, text: &'a [u8]) -> Option<usize> {
+        self.longest_match_at(text, 0)
     }
 }
