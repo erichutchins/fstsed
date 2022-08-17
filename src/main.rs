@@ -130,7 +130,7 @@ fn runjson(args: Args, colormode: ColorChoice) -> Result<()> {
     let mut out = stdout(ColorChoice::Auto);
     let re = Regex::new(r"(?i-u)\W").unwrap();
 
-    let mut fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
+    let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
 
     for path in args.input {
         let reader = get_input(Some(path))?;
@@ -163,7 +163,7 @@ fn runjson(args: Args, colormode: ColorChoice) -> Result<()> {
                         }
                         Some(len) => {
                             // we have a match! len is the size of the input buffer that matched
-                            out.write_all(fsed.get_match().render().as_bytes())?;
+                            // out.write_all(fsed.get_match().render().as_bytes())?;
                             // advance the line buffer
                             input = &input[len..];
                         }
@@ -186,7 +186,18 @@ fn process_line<W>(mut input: &[u8], fsed: &mut fstsed::FstSed, out: &mut W) -> 
 where
     W: Write + Send + 'static,
 {
+    let mut _lastpos: usize = 0;
     // process each line
+    for m in fsed.find_iter(input) {
+        // print gap from last match to current match
+        out.write_all(&input[_lastpos..=m.start()])?;
+
+        // print rendered match
+        //out.write_all(fsed.get_match().render().as_bytes())?;
+
+        _lastpos = m.start() + fsed.get_match_len();
+    }
+
     while !input.is_empty() {
         match fsed.longest_match(input) {
             None => {
@@ -204,7 +215,7 @@ where
             }
             Some(len) => {
                 // we have a match! len is the size of the input buffer that matched
-                out.write_all(fsed.get_match().render().as_bytes())?;
+                // out.write_all(fsed.get_match().render().as_bytes())?;
                 // advance the line buffer
                 input = &input[len..];
             }
@@ -236,7 +247,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
     let re = Regex::new(r"(?i-u)\W").unwrap();
 
     // pub fn new(fstpath: Utf8PathBuf, user_template: Option<String>, color: ColorChoice) -> Self {
-    let mut fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
+    let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
 
     for path in args.input {
         let reader = get_input(Some(path))?;
@@ -261,7 +272,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                     }
                     Some(len) => {
                         // we have a match! len is the size of the input buffer that matched
-                        out.write_all(fsed.get_match().render().as_bytes())?;
+                        // out.write_all(fsed.get_match().render().as_bytes())?;
                         // advance the line buffer
                         input = &input[len..];
                     }
@@ -280,7 +291,7 @@ fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
     let mut out = stdout(ColorChoice::Auto);
     let re = Regex::new(r"(?i-u)\W").unwrap();
 
-    let mut fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
+    let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
 
     for path in args.input {
         let reader = get_input(Some(path))?;
@@ -304,7 +315,7 @@ fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
                     }
                     Some(len) => {
                         // we have a match! len is the size of the input buffer that matched
-                        out.write_all(fsed.get_match().render().as_bytes())?;
+                        // out.write_all(fsed.get_match().render().as_bytes())?;
                         out.write_all(b"\n")?;
                         // advance the line buffer
                         input = &input[len..];

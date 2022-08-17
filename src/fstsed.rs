@@ -4,10 +4,11 @@ use fst::raw::{Fst, Output};
 use lazy_static::lazy_static;
 use memmap2::Mmap;
 use microtemplate::{render, Context};
-use regex::bytes::Matches;
 use regex::bytes::Match;
+use regex::bytes::Matches;
 use regex::bytes::Regex;
 use serde_json::Value;
+use std::cell::RefCell;
 use std::fs::File;
 use termcolor::ColorChoice;
 
@@ -66,13 +67,13 @@ impl Context for &FstMatch<'_> {
 }
 
 pub struct FstMatches<'f, 'a> {
-    fstsed: &'f mut FstSed,
+    fstsed: &'f FstSed,
     haystack: &'a [u8],
     reiter: Matches<'f, 'a>,
 }
 
 impl<'f, 'a> FstMatches<'f, 'a> {
-    pub fn new(fstsed: &'f mut FstSed, haystack: &'a [u8]) -> Self {
+    pub fn new(fstsed: &'f FstSed, haystack: &'a [u8]) -> Self {
         Self {
             fstsed,
             haystack,
@@ -88,12 +89,15 @@ impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
     //fn next(&mut self) -> Option<usize> {
     fn next(&mut self) -> Option<Match<'a>> {
         let mut m = self.reiter.next();
-        while m.is_some() && self.fstsed
+        while m.is_some()
+            && self
+                .fstsed
                 .longest_match_at(self.haystack, m.unwrap().start())
-                .is_none() {
+                .is_none()
+        {
             m = self.reiter.next();
         }
-        m         
+        m
     }
 }
 
@@ -101,9 +105,9 @@ pub struct FstSed {
     fst: Fst<Mmap>,
     pub color: ColorChoice,
     pub template: String,
-    keycache: Vec<u8>,
-    valuecache: Vec<u8>,
-    startcache: usize,
+    keycache: RefCell<Vec<u8>>,
+    valuecache: RefCell<Vec<u8>>,
+    startcache: RefCell<usize>,
     has_json_keys: bool,
 }
 
@@ -138,30 +142,40 @@ impl<'a> FstSed {
             fst,
             color,
             template,
-            keycache: Vec::with_capacity(256),
-            valuecache: Vec::with_capacity(2048),
-            startcache: 0,
+            keycache: RefCell::new(Vec::with_capacity(256)),
+            valuecache: RefCell::new(Vec::with_capacity(2048)),
+            startcache: RefCell::new(0),
             has_json_keys,
         }
     }
 
+    // #[inline]
+    // pub fn get_match<'f> (&'f self) -> FstMatch<'f> {
+    //     FstMatch::<'f>::new(
+    //         self.keycache.borrow().as_slice(),
+    //         self.valuecache.borrow().as_slice(),
+    //         &self.template,
+    //         self.has_json_keys,
+    //     )
+    // }
+
     #[inline]
-    pub fn get_match<'f> (&'f self) -> FstMatch<'f> {
-        FstMatch::<'f>::new(
-            self.keycache.as_slice(),
-            self.valuecache.as_slice(),
-            &self.template,
-            self.has_json_keys,
-        )
+    pub fn get_match_len(&self) -> usize {
+        self.keycache.borrow().len()
+    }
+
+    #[inline]
+    pub fn find_iter<'f>(&'f self, text: &'a [u8]) -> FstMatches<'f, 'a> {
+        FstMatches::new(self, text)
     }
 
     // adapted from https://github.com/BurntSushi/fst/pull/104/files
     #[inline]
-    pub fn longest_match_at(&mut self, text: &'a [u8], start: usize) -> Option<usize> {
+    pub fn longest_match_at(&self, text: &'a [u8], start: usize) -> Option<usize> {
         // self has to be borrowed mutable so we can keep internal cache up to date
-        self.keycache.clear();
-        self.valuecache.clear();
-        self.startcache = start;
+        self.keycache.borrow_mut().clear();
+        self.valuecache.borrow_mut().clear();
+        *self.startcache.borrow_mut() = start;
 
         lazy_static! {
             static ref RE_NONWORD: Regex = Regex::new(r"(?i-u)\W").unwrap();
@@ -186,7 +200,7 @@ impl<'a> FstSed {
                             if let Some(t) = snode.transitions().next() {
                                 // after the sentinel, we should not have any more
                                 // branching in the fst, so we just grab the first transition
-                                self.valuecache.push(t.inp);
+                                self.valuecache.borrow_mut().push(t.inp);
                                 snode = self.fst.node(t.addr);
                             } else {
                                 // somehow ran out of nodes!
@@ -195,7 +209,9 @@ impl<'a> FstSed {
                         }
 
                         last_match = Some(i + 1);
-                        self.keycache.extend_from_slice(&value[..i + 1]);
+                        self.keycache
+                            .borrow_mut()
+                            .extend_from_slice(&value[..i + 1]);
                     }
                 }
             } else {
@@ -206,7 +222,7 @@ impl<'a> FstSed {
     }
 
     #[inline]
-    pub fn longest_match(&mut self, text: &'a [u8]) -> Option<usize> {
+    pub fn longest_match(&self, text: &'a [u8]) -> Option<usize> {
         self.longest_match_at(text, 0)
     }
 }
