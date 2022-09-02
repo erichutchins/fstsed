@@ -193,8 +193,8 @@ where
         out.write_all(&input[_lastpos..=m.start()])?;
 
         // print rendered match
-        //out.write_all(fsed.get_match().render().as_bytes())?;
-
+        //out.write_all(fsed.render_match().as_bytes())?;
+        out.write_all(fsed.get_match().render().as_bytes())?;
         _lastpos = m.start() + fsed.get_match_len();
     }
 
@@ -215,7 +215,7 @@ where
             }
             Some(len) => {
                 // we have a match! len is the size of the input buffer that matched
-                // out.write_all(fsed.get_match().render().as_bytes())?;
+                out.write_all(fsed.get_match().render().as_bytes())?;
                 // advance the line buffer
                 input = &input[len..];
             }
@@ -272,7 +272,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                     }
                     Some(len) => {
                         // we have a match! len is the size of the input buffer that matched
-                        // out.write_all(fsed.get_match().render().as_bytes())?;
+                        out.write_all(fsed.get_match().render().as_bytes())?;
                         // advance the line buffer
                         input = &input[len..];
                     }
@@ -315,7 +315,7 @@ fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
                     }
                     Some(len) => {
                         // we have a match! len is the size of the input buffer that matched
-                        // out.write_all(fsed.get_match().render().as_bytes())?;
+                        out.write_all(fsed.get_match().render().as_bytes())?;
                         out.write_all(b"\n")?;
                         // advance the line buffer
                         input = &input[len..];

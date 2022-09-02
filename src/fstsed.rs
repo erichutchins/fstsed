@@ -8,8 +8,10 @@ use regex::bytes::Match;
 use regex::bytes::Matches;
 use regex::bytes::Regex;
 use serde_json::Value;
+use std::cell::Ref;
 use std::cell::RefCell;
 use std::fs::File;
+use std::ops::Deref;
 use termcolor::ColorChoice;
 
 const SENTINEL: u8 = 0;
@@ -23,28 +25,31 @@ lazy_static! {
 ///
 /// The lifetime parameter `'a` refers to the lifetime of the haystack text.
 /// The lifetime parameter `'f` refers to the lifetime of the fstsed object holding cached matches.
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FstMatch<'f> {
     //start: usize,
-    key: &'f [u8],
-    value: &'f [u8],
+    // key: &'f [u8],
+    // value: &'f [u8],
+    key: String,
+    value: String,
     template: &'f str,
     jsonvalue: Option<Value>,
 }
 
 impl<'f> FstMatch<'f> {
-    pub fn new(key: &'f [u8], value: &'f [u8], template: &'f str, parse_value: bool) -> Self {
-        Self {
-            key,
-            value,
-            template,
-            jsonvalue: if parse_value {
-                Some(serde_json::from_slice(value).unwrap_or_else(|_| Value::default()))
-            } else {
-                None
-            },
-        }
-    }
+    // pub fn new(key: &'f [u8], value: &'f [u8], template: &'f str, parse_value: bool) -> Self {
+    //     let jsonvalue = if parse_value {
+    //         Some(serde_json::from_slice(value).unwrap_or_else(|_| Value::default()))
+    //     } else {
+    //         None
+    //     };
+
+    //     Self {
+    //         key,
+    //         value,
+    //         template,
+    //         jsonvalue,
+    //     }
+    // }
 
     pub fn render(&self) -> String {
         render(self.template, self)
@@ -54,8 +59,8 @@ impl<'f> FstMatch<'f> {
 impl Context for &FstMatch<'_> {
     fn get_field(&self, field_name: &str) -> &str {
         match field_name {
-            "key" => unsafe { std::str::from_utf8_unchecked(self.key) },
-            "value" => unsafe { std::str::from_utf8_unchecked(self.value) },
+            "key" => self.key.as_str(),
+            "value" => self.value.as_str(),
             _ => self
                 .jsonvalue
                 .as_ref()
@@ -149,19 +154,35 @@ impl<'a> FstSed {
         }
     }
 
-    // #[inline]
-    // pub fn get_match<'f> (&'f self) -> FstMatch<'f> {
-    //     FstMatch::<'f>::new(
-    //         self.keycache.borrow().as_slice(),
-    //         self.valuecache.borrow().as_slice(),
-    //         &self.template,
-    //         self.has_json_keys,
-    //     )
-    // }
+    #[inline]
+    pub fn get_match(&self) -> FstMatch {
+        FstMatch {
+            key: std::str::from_utf8(self.keycache.borrow().as_slice())
+                .unwrap_or("<keyerror>")
+                .to_string(),
+            value: std::str::from_utf8(self.valuecache.borrow().as_slice())
+                .unwrap_or("<valueerror>")
+                .to_string(),
+            template: &self.template,
+            jsonvalue: if self.has_json_keys {
+                Some(
+                    serde_json::from_slice(self.valuecache.borrow().as_slice())
+                        .unwrap_or_else(|_| Value::default()),
+                )
+            } else {
+                None
+            },
+        }
+    }
 
     #[inline]
     pub fn get_match_len(&self) -> usize {
         self.keycache.borrow().len()
+    }
+
+    #[inline]
+    pub fn get_match_key(&self) -> impl Deref<Target = Vec<u8>> + '_ {
+        Ref::map(self.keycache.borrow(), |k| k)
     }
 
     #[inline]
