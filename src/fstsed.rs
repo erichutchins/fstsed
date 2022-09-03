@@ -8,10 +8,8 @@ use regex::bytes::Match;
 use regex::bytes::Matches;
 use regex::bytes::Regex;
 use serde_json::Value;
-use std::cell::Ref;
 use std::cell::RefCell;
 use std::fs::File;
-use std::ops::Deref;
 use termcolor::ColorChoice;
 
 const SENTINEL: u8 = 0;
@@ -97,11 +95,14 @@ impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
         while m.is_some()
             && self
                 .fstsed
-                .longest_match_at(self.haystack, m.unwrap().start())
+                .longest_match_at(self.haystack, m.unwrap().start() + 1)
                 .is_none()
         {
             m = self.reiter.next();
         }
+        // I would like to create a custom Match object with the true start offset of the text
+        // match, plus the text of the match itself, but the constructor is private. Could not
+        // overcome lifetime issues with returning a FstMatch directly from this.
         m
     }
 }
@@ -156,6 +157,8 @@ impl<'a> FstSed {
 
     #[inline]
     pub fn get_match(&self) -> FstMatch {
+        // instantiate object directly. i tried using a new constructor, but had lifetime/scoping
+        // issues passing references created in thus function
         FstMatch {
             key: std::str::from_utf8(self.keycache.borrow().as_slice())
                 .unwrap_or("<keyerror>")
@@ -181,9 +184,13 @@ impl<'a> FstSed {
     }
 
     #[inline]
-    pub fn get_match_key(&self) -> impl Deref<Target = Vec<u8>> + '_ {
-        Ref::map(self.keycache.borrow(), |k| k)
+    pub fn get_match_start(&self) -> usize {
+        *self.startcache.borrow()
     }
+    // #[inline]
+    // pub fn get_match_key(&self) -> impl Deref<Target = Vec<u8>> + '_ {
+    //     Ref::map(self.keycache.borrow(), |k| k)
+    // }
 
     #[inline]
     pub fn find_iter<'f>(&'f self, text: &'a [u8]) -> FstMatches<'f, 'a> {
@@ -193,7 +200,6 @@ impl<'a> FstSed {
     // adapted from https://github.com/BurntSushi/fst/pull/104/files
     #[inline]
     pub fn longest_match_at(&self, text: &'a [u8], start: usize) -> Option<usize> {
-        // self has to be borrowed mutable so we can keep internal cache up to date
         self.keycache.borrow_mut().clear();
         self.valuecache.borrow_mut().clear();
         *self.startcache.borrow_mut() = start;
@@ -206,6 +212,7 @@ impl<'a> FstSed {
         let mut out = Output::zero();
         let mut last_match = None;
         let value = &text[start..];
+
         for (i, &b) in value.iter().enumerate() {
             if let Some(trans_index) = node.find_input(b) {
                 let t = node.transition(trans_index);

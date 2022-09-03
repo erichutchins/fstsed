@@ -114,7 +114,7 @@ fn main() -> Result<()> {
     } else if args.json {
         runjson(args, colormode)
     } else {
-        runnew(args, colormode)
+        run(args, colormode)
     } {
         // safely ignore broken pipes, e.g. head
         if is_broken_pipe(&e) {
@@ -126,63 +126,33 @@ fn main() -> Result<()> {
 }
 
 #[inline]
-fn runjson(args: Args, colormode: ColorChoice) -> Result<()> {
-    let mut out = stdout(ColorChoice::Auto);
-    let re = Regex::new(r"(?i-u)\W").unwrap();
+fn runjson(args: Args, colormode: ColorChoice) -> Result<(), Error> {
+    let mut out = stdout(colormode);
 
-    let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
+    let mut fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
 
     for path in args.input {
         let reader = get_input(Some(path))?;
-        let mut lastpos: usize;
-
-        for byteline in reader.byte_lines() {
-            let linevec = byteline.unwrap();
-            let lineslice = linevec.as_slice();
-            // process each line
-            lastpos = 0;
-            for (start, end) in jsonquotes_range_iter(lineslice) {
+        reader.for_byte_line_with_terminator(|line| {
+            let mut lastpos: usize = 0;
+            for (start, end) in jsonquotes_range_iter(line) {
                 // print from last spot to new start
-                out.write_all(&lineslice[lastpos..start])?;
-
-                let mut input = &lineslice[start..end];
-                while !input.is_empty() {
-                    match fsed.longest_match(input) {
-                        None => {
-                            // no match, so advance the line buffer to the next
-                            // word boundary and search again
-                            if let Some(nextword) = re.find(input) {
-                                out.write_all(&input[..nextword.start() + 1])?;
-                                input = &input[nextword.start() + 1..];
-                                continue;
-                            } else {
-                                // no more words, so just print remainder of the line
-                                out.write_all(input)?;
-                                break;
-                            }
-                        }
-                        Some(len) => {
-                            // we have a match! len is the size of the input buffer that matched
-                            // out.write_all(fsed.get_match().render().as_bytes())?;
-                            // advance the line buffer
-                            input = &input[len..];
-                        }
-                    }; // match
-                } // while input
-
+                out.write_all(&line[lastpos..start])?;
+                // search the quoted string
+                process_line(&line[start..end], &mut fsed, &mut out);
                 lastpos = end;
             }
-            out.write_all(&lineslice[lastpos..])?;
-            out.write_all(b"\n")?;
-        } // for each line
-    } // for each path
-
+            // print remainder
+            out.write_all(&line[lastpos..])?;
+            Ok(true)
+        })?;
+    }
     out.flush()?;
     Ok(())
 }
 
 #[inline]
-fn process_line<W>(mut input: &[u8], fsed: &mut fstsed::FstSed, out: &mut W) -> Result<(), Error>
+fn process_line<W>(input: &[u8], fsed: &mut fstsed::FstSed, out: &mut W) -> Result<(), Error>
 where
     W: Write + Send + 'static,
 {
@@ -193,42 +163,21 @@ where
         out.write_all(&input[_lastpos..=m.start()])?;
 
         // print rendered match
-        //out.write_all(fsed.render_match().as_bytes())?;
         out.write_all(fsed.get_match().render().as_bytes())?;
-        _lastpos = m.start() + fsed.get_match_len();
+        // have to add one! the m.start is unfortunely the word boundary pos
+        // not the actual start of the matching text
+        _lastpos = m.start() + 1 + fsed.get_match_len();
     }
+    // print remainder
+    out.write_all(&input[_lastpos..])?;
 
-    while !input.is_empty() {
-        match fsed.longest_match(input) {
-            None => {
-                // no match, so advance the line buffer to the next
-                // word boundary and search again
-                if let Some(nextword) = RE_NONWORD.find(input) {
-                    out.write_all(&input[..=nextword.start()])?;
-                    input = &input[nextword.start() + 1..];
-                    continue;
-                } else {
-                    // no more words, so just print remainder of the line
-                    out.write_all(input)?;
-                    break;
-                }
-            }
-            Some(len) => {
-                // we have a match! len is the size of the input buffer that matched
-                out.write_all(fsed.get_match().render().as_bytes())?;
-                // advance the line buffer
-                input = &input[len..];
-            }
-        }; // match
-    } // while input
     Ok(())
 }
 
 #[inline]
-fn runnew(args: Args, colormode: ColorChoice) -> Result<(), Error> {
+fn run(args: Args, colormode: ColorChoice) -> Result<(), Error> {
     let mut out = stdout(colormode);
 
-    // pub fn new(fstpath: Utf8PathBuf, user_template: Option<String>, color: ColorChoice) -> Self {
     let mut fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
     for path in args.input {
         let reader = get_input(Some(path))?;
@@ -242,89 +191,21 @@ fn runnew(args: Args, colormode: ColorChoice) -> Result<(), Error> {
 }
 
 #[inline]
-fn run(args: Args, colormode: ColorChoice) -> Result<()> {
-    let mut out = stdout(ColorChoice::Auto);
-    let re = Regex::new(r"(?i-u)\W").unwrap();
-
-    // pub fn new(fstpath: Utf8PathBuf, user_template: Option<String>, color: ColorChoice) -> Self {
-    let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
-
-    for path in args.input {
-        let reader = get_input(Some(path))?;
-        for byteline in reader.byte_lines() {
-            let linevec = byteline.unwrap();
-            let mut input = linevec.as_slice();
-            // process each line
-            while !input.is_empty() {
-                match fsed.longest_match(input) {
-                    None => {
-                        // no match, so advance the line buffer to the next
-                        // word boundary and search again
-                        if let Some(nextword) = re.find(input) {
-                            out.write_all(&input[..=nextword.start()])?;
-                            input = &input[nextword.start() + 1..];
-                            continue;
-                        } else {
-                            // no more words, so just print remainder of the line
-                            out.write_all(input)?;
-                            break;
-                        }
-                    }
-                    Some(len) => {
-                        // we have a match! len is the size of the input buffer that matched
-                        out.write_all(fsed.get_match().render().as_bytes())?;
-                        // advance the line buffer
-                        input = &input[len..];
-                    }
-                }; // match
-            } // while input
-            out.write_all(b"\n")?;
-        } // for each line
-    } // for each path
-
-    out.flush()?;
-    Ok(())
-}
-
-#[inline]
 fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
-    let mut out = stdout(ColorChoice::Auto);
-    let re = Regex::new(r"(?i-u)\W").unwrap();
+    let mut out = stdout(colormode);
 
-    let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
-
+    let mut fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
     for path in args.input {
         let reader = get_input(Some(path))?;
-        for byteline in reader.byte_lines() {
-            let linevec = byteline.unwrap();
-            let mut input = linevec.as_slice();
-            // process each line
-            while !input.is_empty() {
-                match fsed.longest_match(input) {
-                    None => {
-                        // no match, so advance the line buffer to the next
-                        // word boundary and search again
-                        if let Some(nextword) = re.find(input) {
-                            input = &input[nextword.start() + 1..];
-                            continue;
-                        } else {
-                            // no more words, so just print remainder of the line
-                            out.write_all(input)?;
-                            break;
-                        }
-                    }
-                    Some(len) => {
-                        // we have a match! len is the size of the input buffer that matched
-                        out.write_all(fsed.get_match().render().as_bytes())?;
-                        out.write_all(b"\n")?;
-                        // advance the line buffer
-                        input = &input[len..];
-                    }
-                }; // match
-            } // while line
-        } // for line
-    } // for path
-
+        reader.for_byte_line_with_terminator(|line| {
+            for m in fsed.find_iter(line) {
+                // print rendered match and a new line
+                out.write_all(fsed.get_match().render().as_bytes())?;
+                out.write_all(b"\n")?;
+            }
+            Ok(true)
+        })?;
+    }
     out.flush()?;
     Ok(())
 }
