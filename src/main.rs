@@ -6,6 +6,7 @@ use clap::{ArgEnum, Parser};
 use grep_cli::{self, stdout};
 use lazy_static::lazy_static;
 use regex::bytes::Regex;
+use serde_json::json;
 use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::process::exit;
@@ -126,32 +127,6 @@ fn main() -> Result<()> {
 }
 
 #[inline]
-fn runjson(args: Args, colormode: ColorChoice) -> Result<(), Error> {
-    let mut out = stdout(colormode);
-
-    let mut fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
-
-    for path in args.input {
-        let reader = get_input(Some(path))?;
-        reader.for_byte_line_with_terminator(|line| {
-            let mut lastpos: usize = 0;
-            for (start, end) in jsonquotes_range_iter(line) {
-                // print from last spot to new start
-                out.write_all(&line[lastpos..start])?;
-                // search the quoted string
-                process_line(&line[start..end], &mut fsed, &mut out);
-                lastpos = end;
-            }
-            // print remainder
-            out.write_all(&line[lastpos..])?;
-            Ok(true)
-        })?;
-    }
-    out.flush()?;
-    Ok(())
-}
-
-#[inline]
 fn process_line<W>(input: &[u8], fsed: &mut fstsed::FstSed, out: &mut W) -> Result<(), Error>
 where
     W: Write + Send + 'static,
@@ -161,7 +136,6 @@ where
     for m in fsed.find_iter(input) {
         // print gap from last match to current match
         out.write_all(&input[_lastpos..=m.start()])?;
-
         // print rendered match
         out.write_all(fsed.get_match().render().as_bytes())?;
         // have to add one! the m.start is unfortunely the word boundary pos
@@ -177,11 +151,12 @@ where
 #[inline]
 fn run(args: Args, colormode: ColorChoice) -> Result<(), Error> {
     let mut out = stdout(colormode);
-
     let mut fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
+
     for path in args.input {
         let reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
+            // i cant figure out how to transform the std::io::error into anyhow
             process_line(line, &mut fsed, &mut out);
             Ok(true)
         })?;
@@ -193,16 +168,52 @@ fn run(args: Args, colormode: ColorChoice) -> Result<(), Error> {
 #[inline]
 fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
     let mut out = stdout(colormode);
+    let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
 
-    let mut fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
     for path in args.input {
         let reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
-            for m in fsed.find_iter(line) {
+            for _ in fsed.find_iter(line) {
                 // print rendered match and a new line
                 out.write_all(fsed.get_match().render().as_bytes())?;
                 out.write_all(b"\n")?;
             }
+            Ok(true)
+        })?;
+    }
+    out.flush()?;
+    Ok(())
+}
+
+#[inline]
+fn runjson(args: Args, _: ColorChoice) -> Result<(), Error> {
+    // cant colorized text inside of json strings
+    let mut out = stdout(ColorChoice::Never);
+    let mut fsed = fstsed::FstSed::new(args.fst, args.template, ColorChoice::Never);
+
+    // temp buffer for holding serde decoded json
+    let mut buf = Vec::new();
+
+    for path in args.input {
+        let reader = get_input(Some(path))?;
+        reader.for_byte_line_with_terminator(|line| {
+            let mut lastpos: usize = 0;
+            for (start, end) in jsonquotes_range_iter(line) {
+                // print from last spot to new start
+                out.write_all(&line[lastpos..start])?;
+                // search the quoted string
+                match serde_json::from_slice::<String>(&line[start..end]) {
+                    Ok(s) => {
+                        buf.clear();
+                        process_line(&s.as_bytes(), &mut fsed, &mut buf);
+                        serde_json::to_writer(&mut out, std::str::from_utf8(&buf).unwrap())?;
+                    }
+                    _ => out.write_all(&line[start..end])?,
+                };
+                lastpos = end;
+            }
+            // print remainder
+            out.write_all(&line[lastpos..])?;
             Ok(true)
         })?;
     }

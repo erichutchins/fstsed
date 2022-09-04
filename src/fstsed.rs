@@ -15,7 +15,11 @@ use termcolor::ColorChoice;
 const SENTINEL: u8 = 0;
 
 lazy_static! {
-    static ref RE_NONWORD_OR_START: Regex = Regex::new(r"(?i-u)^|\W").unwrap();
+    static ref RE_NONWORD: Regex = Regex::new(r"(?i-u)\W").unwrap();
+}
+
+lazy_static! {
+    static ref RE_START: Regex = Regex::new(r"(?i-u)^").unwrap();
 }
 
 /// FstMatch represents a single match of a fst key in a haystack
@@ -34,21 +38,6 @@ pub struct FstMatch<'f> {
 }
 
 impl<'f> FstMatch<'f> {
-    // pub fn new(key: &'f [u8], value: &'f [u8], template: &'f str, parse_value: bool) -> Self {
-    //     let jsonvalue = if parse_value {
-    //         Some(serde_json::from_slice(value).unwrap_or_else(|_| Value::default()))
-    //     } else {
-    //         None
-    //     };
-
-    //     Self {
-    //         key,
-    //         value,
-    //         template,
-    //         jsonvalue,
-    //     }
-    // }
-
     pub fn render(&self) -> String {
         render(self.template, self)
     }
@@ -72,7 +61,8 @@ impl Context for &FstMatch<'_> {
 pub struct FstMatches<'f, 'a> {
     fstsed: &'f FstSed,
     haystack: &'a [u8],
-    reiter: Matches<'f, 'a>,
+    skip: usize,
+    reiter: std::iter::Chain<regex::bytes::Matches<'f, 'a>, regex::bytes::Matches<'f, 'a>>,
 }
 
 impl<'f, 'a> FstMatches<'f, 'a> {
@@ -80,25 +70,27 @@ impl<'f, 'a> FstMatches<'f, 'a> {
         Self {
             fstsed,
             haystack,
-            reiter: RE_NONWORD_OR_START.find_iter(haystack),
+            skip: 0,
+            reiter: RE_START
+                .find_iter(haystack)
+                .chain(RE_NONWORD.find_iter(haystack)),
         }
     }
 }
 
 impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
     type Item = Match<'a>;
-    //type Item = usize;
 
-    //fn next(&mut self) -> Option<usize> {
     fn next(&mut self) -> Option<Match<'a>> {
         let mut m = self.reiter.next();
         while m.is_some()
             && self
                 .fstsed
-                .longest_match_at(self.haystack, m.unwrap().start() + 1)
+                .longest_match_at(self.haystack, m.unwrap().start() + self.skip)
                 .is_none()
         {
             m = self.reiter.next();
+            self.skip = 1;
         }
         // I would like to create a custom Match object with the true start offset of the text
         // match, plus the text of the match itself, but the constructor is private. Could not
@@ -204,9 +196,9 @@ impl<'a> FstSed {
         self.valuecache.borrow_mut().clear();
         *self.startcache.borrow_mut() = start;
 
-        lazy_static! {
-            static ref RE_NONWORD: Regex = Regex::new(r"(?i-u)\W").unwrap();
-        }
+        // lazy_static! {
+        //     static ref RE_NONWORD: Regex = Regex::new(r"(?i-u)\W").unwrap();
+        // }
 
         let mut node = self.fst.root();
         let mut out = Output::zero();
