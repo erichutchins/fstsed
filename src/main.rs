@@ -135,12 +135,11 @@ where
     // process each line
     for m in fsed.find_iter(input) {
         // print gap from last match to current match
-        out.write_all(&input[_lastpos..=m.start()])?;
+        out.write_all(&input[_lastpos..m])?;
         // print rendered match
         out.write_all(fsed.get_match().render().as_bytes())?;
-        // have to add one! the m.start is unfortunely the word boundary pos
-        // not the actual start of the matching text
-        _lastpos = m.start() + 1 + fsed.get_match_len();
+        // advance the position past our match length
+        _lastpos = m + fsed.get_match_len();
     }
     // print remainder
     out.write_all(&input[_lastpos..])?;
@@ -187,7 +186,7 @@ fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
 
 #[inline]
 fn runjson(args: Args, _: ColorChoice) -> Result<(), Error> {
-    // cant colorized text inside of json strings
+    // cant colorize text inside of json strings
     let mut out = stdout(ColorChoice::Never);
     let mut fsed = fstsed::FstSed::new(args.fst, args.template, ColorChoice::Never);
 
@@ -205,7 +204,7 @@ fn runjson(args: Args, _: ColorChoice) -> Result<(), Error> {
                 match serde_json::from_slice::<String>(&line[start..end]) {
                     Ok(s) => {
                         buf.clear();
-                        process_line(&s.as_bytes(), &mut fsed, &mut buf);
+                        process_line(s.as_bytes(), &mut fsed, &mut buf);
                         serde_json::to_writer(&mut out, std::str::from_utf8(&buf).unwrap())?;
                     }
                     _ => out.write_all(&line[start..end])?,

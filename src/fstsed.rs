@@ -62,6 +62,7 @@ pub struct FstMatches<'f, 'a> {
     fstsed: &'f FstSed,
     haystack: &'a [u8],
     skip: usize,
+    // would be better to use a Generic here...
     reiter: std::iter::Chain<regex::bytes::Matches<'f, 'a>, regex::bytes::Matches<'f, 'a>>,
 }
 
@@ -79,10 +80,13 @@ impl<'f, 'a> FstMatches<'f, 'a> {
 }
 
 impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
-    type Item = Match<'a>;
+    //type Item = Match<'a>;
+    type Item = usize;
 
-    fn next(&mut self) -> Option<Match<'a>> {
+    //fn next(&mut self) -> Option<Match<'a>> {
+    fn next(&mut self) -> Option<usize> {
         let mut m = self.reiter.next();
+        let mut start = Some(0);
         while m.is_some()
             && self
                 .fstsed
@@ -95,7 +99,8 @@ impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
         // I would like to create a custom Match object with the true start offset of the text
         // match, plus the text of the match itself, but the constructor is private. Could not
         // overcome lifetime issues with returning a FstMatch directly from this.
-        m
+        start = Some(self.fstsed.get_match_start());
+        m.and(start)
     }
 }
 
