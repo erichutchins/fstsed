@@ -27,8 +27,6 @@ lazy_static! {
 /// The lifetime parameter `'f` refers to the lifetime of the fstsed object holding cached matches.
 pub struct FstMatch<'f> {
     //start: usize,
-    // key: &'f [u8],
-    // value: &'f [u8],
     key: String,
     value: String,
     template: &'f str,
@@ -60,7 +58,7 @@ pub struct FstMatches<'f, 'a> {
     fstsed: &'f FstSed,
     haystack: &'a [u8],
     skip: usize,
-    // would be better to use a Generic here...
+    // TODO: would be better to use a Generic here...
     reiter: std::iter::Chain<regex::bytes::Matches<'f, 'a>, regex::bytes::Matches<'f, 'a>>,
 }
 
@@ -82,7 +80,10 @@ impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
 
     fn next(&mut self) -> Option<usize> {
         let mut m = self.reiter.next();
-        let mut start = Some(0);
+        // self.skip will be 0 only for the very first iteration. this is because matching at the
+        // beginning of the line is a slightly different operation: we want to test that very first
+        // byte if it is in the fst. for all other iterations, we are looking for word boundaries
+        // and thus want to test if the NEXT byte is in the fst
         while m.is_some()
             && self
                 .fstsed
@@ -92,12 +93,11 @@ impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
             m = self.reiter.next();
             self.skip = 1;
         }
-        // I would like to create a custom Match object with the true start offset of the text
+        // ideally this iterator would return a custom Match object with the true start offset of the text
         // match, plus the text of the match itself, but the constructor is private. Could not
         // overcome lifetime issues with returning a FstMatch directly from this.
-        // this iterator just returns usize position of the match start if any
-        start = Some(self.fstsed.get_match_start());
-        m.and(start)
+        // this iterator just returns usize position of the match start, if any
+        m.and(Some(self.fstsed.get_match_start()))
     }
 }
 
@@ -181,10 +181,6 @@ impl<'a> FstSed {
     pub fn get_match_start(&self) -> usize {
         *self.startcache.borrow()
     }
-    // #[inline]
-    // pub fn get_match_key(&self) -> impl Deref<Target = Vec<u8>> + '_ {
-    //     Ref::map(self.keycache.borrow(), |k| k)
-    // }
 
     #[inline]
     pub fn find_iter<'f>(&'f self, text: &'a [u8]) -> FstMatches<'f, 'a> {
@@ -197,10 +193,6 @@ impl<'a> FstSed {
         self.keycache.borrow_mut().clear();
         self.valuecache.borrow_mut().clear();
         *self.startcache.borrow_mut() = start;
-
-        // lazy_static! {
-        //     static ref RE_NONWORD: Regex = Regex::new(r"(?i-u)\W").unwrap();
-        // }
 
         let mut node = self.fst.root();
         let mut out = Output::zero();

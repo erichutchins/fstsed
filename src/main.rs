@@ -4,8 +4,6 @@ use bstr::io::BufReadExt;
 use camino::Utf8PathBuf;
 use clap::{ArgEnum, Parser};
 use grep_cli::{self, stdout};
-use lazy_static::lazy_static;
-use regex::bytes::Regex;
 use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::process::exit;
@@ -15,10 +13,6 @@ pub mod fstsed;
 pub mod jsonquotes;
 
 const BUFFERSIZE: usize = 64 * 1024;
-
-lazy_static! {
-    static ref RE_NONWORD: Regex = Regex::new(r"(?i-u)\W").unwrap();
-}
 
 // via https://github.com/sstadick/hck/blob/master/src/main.rs#L90
 /// Check if err is a broken pipe.
@@ -68,10 +62,14 @@ struct Args {
     #[clap(short, long)]
     template: Option<String>,
 
-    /// Specify json input. Fstsed will unescape json strings before searching and ensure
-    /// output is json-safe
+    /// Specify json input. Fstsed will only search inside quoted json strings
     #[clap(short, long)]
     json: bool,
+
+    /// If json is true, additionally deserialize/decode json strings before searching.
+    /// Ensures all template decorations are properly encoded for subsequent json processing
+    #[clap(short, long)]
+    deserialize: bool,
 
     /// Input file(s) to process. Leave empty or use "-" to read from stdin
     #[clap(value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
@@ -111,6 +109,8 @@ fn main() -> Result<()> {
     // invoke the command!
     if let Err(e) = if args.only_matching {
         run_onlymatching(args, colormode)
+    } else if args.json && args.deserialize {
+        runjson_and_deserialize(args, colormode)
     } else if args.json {
         runjson(args, colormode)
     } else {
@@ -154,7 +154,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<(), Error> {
     for path in args.input {
         let reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
-            // i cant figure out how to transform the std::io::error into anyhow
+            // TODO: i cant figure out how to transform the std::io::error into anyhow
             process_line(line, &fsed, &mut out);
             Ok(true)
         })?;
@@ -172,7 +172,7 @@ fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
         let reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
             for _ in fsed.find_iter(line) {
-                // print rendered match and a new line
+                // just print rendered match and a new line
                 out.write_all(fsed.get_match().render().as_bytes())?;
                 out.write_all(b"\n")?;
             }
@@ -216,7 +216,7 @@ fn runjson_and_deserialize(args: Args, _: ColorChoice) -> Result<(), Error> {
     let mut out = stdout(ColorChoice::Never);
     let fsed = fstsed::FstSed::new(args.fst, args.template, ColorChoice::Never);
 
-    // temp buffer for holding serde decoded json
+    // temp buffer for holding processed string before re-serializing
     let mut buf = Vec::new();
 
     for path in args.input {
@@ -226,15 +226,21 @@ fn runjson_and_deserialize(args: Args, _: ColorChoice) -> Result<(), Error> {
             for (start, end) in jsonquotes_range_iter(line) {
                 // print from last spot to new start
                 out.write_all(&line[lastpos..start])?;
-                // search the quoted string
+                // deserialize string and process result
+                // note: we are allocating a new string every time
                 match serde_json::from_slice::<String>(&line[start..end]) {
                     Ok(s) => {
                         buf.clear();
+                        // reuse vec buf to collect the processed line
                         process_line(s.as_bytes(), &fsed, &mut buf);
+                        // serialize new json string directly to the output
                         serde_json::to_writer(&mut out, std::str::from_utf8(&buf).unwrap())?;
                     }
+                    // if error deserializing, just print the original content and move on
+                    // we're not here to enforce json formats
                     _ => out.write_all(&line[start..end])?,
                 };
+                // advance position
                 lastpos = end;
             }
             // print remainder
