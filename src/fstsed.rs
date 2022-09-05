@@ -4,8 +4,6 @@ use fst::raw::{Fst, Output};
 use lazy_static::lazy_static;
 use memmap2::Mmap;
 use microtemplate::{render, Context};
-use regex::bytes::Match;
-use regex::bytes::Matches;
 use regex::bytes::Regex;
 use serde_json::Value;
 use std::cell::RefCell;
@@ -80,10 +78,8 @@ impl<'f, 'a> FstMatches<'f, 'a> {
 }
 
 impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
-    //type Item = Match<'a>;
     type Item = usize;
 
-    //fn next(&mut self) -> Option<Match<'a>> {
     fn next(&mut self) -> Option<usize> {
         let mut m = self.reiter.next();
         let mut start = Some(0);
@@ -99,6 +95,7 @@ impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
         // I would like to create a custom Match object with the true start offset of the text
         // match, plus the text of the match itself, but the constructor is private. Could not
         // overcome lifetime issues with returning a FstMatch directly from this.
+        // this iterator just returns usize position of the match start if any
         start = Some(self.fstsed.get_match_start());
         m.and(start)
     }
