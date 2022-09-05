@@ -58,6 +58,9 @@ pub struct FstMatches<'f, 'a> {
     fstsed: &'f FstSed,
     haystack: &'a [u8],
     skip: usize,
+    // chain the two regexes iters together to ensure we can search for matches at the beginning of
+    // a line as well as when word boundaries occur at beginning of line. both might match at pos
+    // 0, but operate in different modes
     // TODO: would be better to use a Generic here...
     reiter: std::iter::Chain<regex::bytes::Matches<'f, 'a>, regex::bytes::Matches<'f, 'a>>,
 }
@@ -75,6 +78,9 @@ impl<'f, 'a> FstMatches<'f, 'a> {
     }
 }
 
+// ideally this iterator would return a custom Match object with the true start offset of the text
+// match, plus the text of the match itself, but the constructor is private. Could not
+// overcome lifetime issues with returning a FstMatch directly from this.
 impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
     type Item = usize;
 
@@ -90,13 +96,11 @@ impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
                 .longest_match_at(self.haystack, m.unwrap().start() + self.skip)
                 .is_none()
         {
+            // advance loop until we find a fstsed match or exhaust the iterator
             m = self.reiter.next();
             self.skip = 1;
         }
-        // ideally this iterator would return a custom Match object with the true start offset of the text
-        // match, plus the text of the match itself, but the constructor is private. Could not
-        // overcome lifetime issues with returning a FstMatch directly from this.
-        // this iterator just returns usize position of the match start, if any
+        // return just position of the match start, if any
         m.and(Some(self.fstsed.get_match_start()))
     }
 }
@@ -207,6 +211,8 @@ impl<'a> FstSed {
 
                 if let Some(sentinel_index) = node.find_input(SENTINEL) {
                     // validate candidate match has nonword boundary char next
+                    // or is at the end of the line. we dont want matches inside other strings,
+                    // foo should not match inside foobar
                     if i == value.len() - 1 || RE_NONWORD.is_match(&value[i + 1..i + 2]) {
                         let sentinel = node.transition(sentinel_index);
                         let mut snode = self.fst.node(sentinel.addr);
