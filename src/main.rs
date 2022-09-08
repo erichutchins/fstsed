@@ -152,7 +152,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<(), Error> {
     let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
 
     for path in args.input {
-        let reader = get_input(Some(path))?;
+        let mut reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
             // TODO: i cant figure out how to transform the std::io::error into anyhow
             process_line(line, &fsed, &mut out);
@@ -169,7 +169,7 @@ fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
     let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
 
     for path in args.input {
-        let reader = get_input(Some(path))?;
+        let mut reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
             for _ in fsed.find_iter(line) {
                 // just print rendered match and a new line
@@ -190,7 +190,7 @@ fn runjson(args: Args, colormode: ColorChoice) -> Result<(), Error> {
     let mut lastpos: usize = 0;
 
     for path in args.input {
-        let reader = get_input(Some(path))?;
+        let mut reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
             lastpos = 0;
             for (start, end) in jsonquotes_range_iter(line) {
@@ -220,7 +220,7 @@ fn runjson_and_deserialize(args: Args, _: ColorChoice) -> Result<(), Error> {
     let mut buf = Vec::new();
 
     for path in args.input {
-        let reader = get_input(Some(path))?;
+        let mut reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
             let mut lastpos: usize = 0;
             for (start, end) in jsonquotes_range_iter(line) {
