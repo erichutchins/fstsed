@@ -13,7 +13,11 @@ use termcolor::ColorChoice;
 const SENTINEL: u8 = 0;
 
 lazy_static! {
-    static ref RE_NONWORD: Regex = Regex::new(r"(?i-u)\W").unwrap();
+    static ref RE_NONWORD: Regex = Regex::new(r#"(?i-u)[, \t\a\n:="]"#).unwrap();
+}
+
+lazy_static! {
+    static ref RE_UNICODE_BOUNDARY: Regex = Regex::new(r"^\W").unwrap();
 }
 
 lazy_static! {
@@ -156,7 +160,7 @@ impl<'a> FstSed {
     #[inline]
     pub fn get_match(&self) -> FstMatch {
         // instantiate object directly. i tried using a new constructor, but had lifetime/scoping
-        // issues passing references created in thus function
+        // issues passing references created in this function
         FstMatch {
             key: std::str::from_utf8(self.keycache.borrow().as_slice())
                 .unwrap_or("<keyerror>")
@@ -213,7 +217,7 @@ impl<'a> FstSed {
                     // validate candidate match has nonword boundary char next
                     // or is at the end of the line. we dont want matches inside other strings,
                     // foo should not match inside foobar
-                    if i == value.len() - 1 || RE_NONWORD.is_match(&value[i + 1..i + 2]) {
+                    if i == value.len() - 1 || RE_UNICODE_BOUNDARY.is_match(&value[i + 1..]) {
                         let sentinel = node.transition(sentinel_index);
                         let mut snode = self.fst.node(sentinel.addr);
                         while !snode.is_final() {

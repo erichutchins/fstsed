@@ -11,17 +11,17 @@ lto = "fat"
 codegen-units = 1
 
 [dependencies]
-anyhow = "1.0.63"
-bstr = "1.0.0"
+anyhow = "1.0.66"
+bstr = "1.0.1"
 camino = "1.1"
-clap = { version = "3.2.20", features = ["derive", "cargo"] }
+clap = { version = "4.0.32", features = ["derive", "cargo"] }
 fst = "0.4"
-grep-cli = "0.1.6"
-itermore = "0.2.0"
+grep-cli = "0.1.7"
+itermore = { version = "0.5.0",  default-features = false, features = ["array_chunks"]}
 lazy_static = "1.4.0"
 memchr = "2.5.0"
-memmap2 = "0.5.7"
+memmap2 = "0.5.8"
 microtemplate = "1.0.3"
-regex = "1.6.0"
-serde_json = "1.0.85"
-termcolor = "1.1.2"
+regex = "1.7.1"
+serde_json = "1.0.91"
+termcolor = "1.2.0"
