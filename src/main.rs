@@ -9,6 +9,7 @@ use std::io::{self, BufReader, Write};
 use std::process::exit;
 use termcolor::ColorChoice;
 
+pub mod build;
 pub mod fstsed;
 pub mod jsonquotes;
 
@@ -26,7 +27,7 @@ fn is_broken_pipe(err: &Error) -> bool {
     false
 }
 
-// via https://github.com/sstadick/crabz/blob/main/src/main.rs#L82
+// via https://github.com/sstadick/crabz/blob/ce0d69efe0628c56b1fb7a1de46798b95eef90aa/src/main.rs#L62
 /// Get a buffered input reader from stdin or a file
 fn get_input(path: Option<Utf8PathBuf>) -> Result<Box<dyn BufReadExt + Send + 'static>> {
     let reader: Box<dyn BufReadExt + Send + 'static> = match path {
@@ -58,12 +59,12 @@ struct Args {
     fst: Utf8PathBuf,
 
     /// Build a fst from json data. Assumes there is a field named "key"
-    #[clap(short = 'b', value_name = "JSON", value_hint = clap::ValueHint::FilePath)]
+    #[clap(short = 'b', value_name = "JSONL", value_hint = clap::ValueHint::FilePath)]
     build: Option<Utf8PathBuf>,
 
     /// Path to write the newly built fst to disk
-    #[clap(short = 'o', value_name = "PATH", value_hint = clap::ValueHint::FilePath)]
-    out: Option<Utf8PathBuf>,
+    #[clap(short = 's', value_name = "FOO", value_hint = clap::ValueHint::FilePath)]
+    save: Option<Utf8PathBuf>,
 
     /// Specify the format of the fstsed match decoration. Field names are enclosed in {},
     /// for example "{field1} any fixed string {field2} & {field3}"
@@ -193,7 +194,7 @@ fn runjson(args: Args, _: ColorChoice) -> Result<(), Error> {
     let fsed = fstsed::FstSed::new(args.fst, args.template, ColorChoice::Never);
 
     // temp buffer for holding processed string before re-serializing
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(BUFFERSIZE);
 
     for path in args.input {
         let mut reader = get_input(Some(path))?;
