@@ -14,16 +14,23 @@ where
     R: BufRead,
 {
     let mut vals: Vec<String> = Vec::new();
+    let mut num_errors = 0;
+
     input.for_byte_line_with_terminator(|line| {
-        // TODO: i cant figure out how to transform the std::io::error into anyhow
+        if line.is_empty() {
+            return Ok(false);
+        }
         let jsonline = serde_json::from_slice(line).unwrap_or_else(|_| Value::default());
-        let keyvalue = jsonline.get(key).and_then(|v| v.as_str()).unwrap_or("");
-        vals.push(format!(
-            "{}{}{}",
-            keyvalue,
-            SENTINEL,
-            str::from_utf8(&line).unwrap_or("")
-        ));
+        if let Some(keyvalue) = jsonline.get(key).and_then(|v| v.as_str()) {
+            vals.push(format!(
+                "{}{}{}",
+                keyvalue,
+                SENTINEL,
+                str::from_utf8(&line).unwrap_or("")
+            ));
+        } else {
+            num_errors += 1;
+        }
         Ok(true)
     })?;
 
