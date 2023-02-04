@@ -1,4 +1,4 @@
-use itermore::Itermore;
+use itermore::prelude::*;
 use memchr::memchr2_iter;
 use memchr::Memchr2;
 

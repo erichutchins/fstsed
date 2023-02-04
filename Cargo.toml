@@ -3,7 +3,17 @@ name = "fstsed"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "Find and replace/decorate text at scale using finite state transducers (fst)"
+authors = ["Eric Hutchins"]
+license = "Unlicense/MIT"
+repository = "https://github.com/erichutchins/fstsed"
+readme = "README.md"
+categories = ["text-processing", "command-line-interface"]
+keywords = ["cli", "fst", "sed", "dfir"]
+
+[[bin]]
+name = "fstsed"
+path = "src/main.rs"
 
 [profile.release]
 debug = true
@@ -11,17 +21,17 @@ lto = "fat"
 codegen-units = 1
 
 [dependencies]
-anyhow = "1.0.63"
-bstr = "0.2.17"
-camino = "1.1"
-clap = { version = "3.2.20", features = ["derive", "cargo"] }
+anyhow = "1.0.68"
+bstr = "1.0.1"
+camino = "1.1.2"
+clap = { version = "4.1.4", features = ["derive", "cargo"] }
 fst = "0.4"
-grep-cli = "0.1.6"
-itermore = "0.2.0"
+grep-cli = "0.1.7"
+itermore = { version = "0.5.0",  default-features = false, features = ["array_chunks"]}
 lazy_static = "1.4.0"
 memchr = "2.5.0"
-memmap2 = "0.5.7"
+memmap2 = "0.5.8"
 microtemplate = "1.0.3"
-regex = "1.6.0"
-serde_json = "1.0.85"
-termcolor = "1.1.2"
+regex = "1.7.1"
+serde_json = "1.0.91"
+termcolor = "1.2.0"

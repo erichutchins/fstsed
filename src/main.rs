@@ -1,14 +1,16 @@
 use crate::jsonquotes::jsonquotes_range_iter;
-use anyhow::{Error, Result};
+use anyhow::{bail, Error, Result};
 use bstr::io::BufReadExt;
 use camino::Utf8PathBuf;
-use clap::{ArgEnum, Parser};
+use clap::{Parser, ValueEnum};
 use grep_cli::{self, stdout};
 use std::fs::File;
 use std::io::{self, BufReader, Write};
+use std::path::Path;
 use std::process::exit;
 use termcolor::ColorChoice;
 
+pub mod build;
 pub mod fstsed;
 pub mod jsonquotes;
 
@@ -26,7 +28,8 @@ fn is_broken_pipe(err: &Error) -> bool {
     false
 }
 
-// via https://github.com/sstadick/crabz/blob/main/src/main.rs#L82
+
+// via https://github.com/sstadick/crabz/blob/ce0d69efe0628c56b1fb7a1de46798b95eef90aa/src/main.rs#L62
 /// Get a buffered input reader from stdin or a file
 fn get_input(path: Option<Utf8PathBuf>) -> Result<Box<dyn BufReadExt + Send + 'static>> {
     let reader: Box<dyn BufReadExt + Send + 'static> = match path {
@@ -50,12 +53,21 @@ struct Args {
     only_matching: bool,
 
     /// Use markers to highlight the matching strings
-    #[clap(short = 'C', long, arg_enum, default_value_t = ArgsColorChoice::Auto)]
+    #[clap(short = 'C', long, value_enum, default_value_t = ArgsColorChoice::Auto)]
     color: ArgsColorChoice,
 
     /// Specify fst db to use
     #[clap(short = 'f', value_name = "FST", value_hint = clap::ValueHint::FilePath)]
     fst: Utf8PathBuf,
+
+    /// Build a fst from json data instead of querying one. Specify output path with
+    /// the -f --fst parameter.
+    #[clap(long)]
+    build: bool,
+
+    /// When building, extract the given field to use as the key in the fst database
+    #[clap(short = 'k', long, value_name = "KEY", default_value = "key")]
+    key: Option<String>,
 
     /// Specify the format of the fstsed match decoration. Field names are enclosed in {},
     /// for example "{field1} any fixed string {field2} & {field3}"
@@ -63,20 +75,17 @@ struct Args {
     template: Option<String>,
 
     /// Specify json input. Fstsed will only search inside quoted json strings
-    #[clap(short, long)]
-    json: bool,
-
-    /// If json is true, additionally deserialize/decode json strings before searching.
+    /// additionally deserialize/decode json strings before searching.
     /// Ensures all template decorations are properly encoded for subsequent json processing
     #[clap(short, long)]
-    deserialize: bool,
+    json: bool,
 
     /// Input file(s) to process. Leave empty or use "-" to read from stdin
     #[clap(value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
     input: Vec<Utf8PathBuf>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, ArgEnum)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
 enum ArgsColorChoice {
     Always,
     Never,
@@ -107,10 +116,10 @@ fn main() -> Result<()> {
     };
 
     // invoke the command!
-    if let Err(e) = if args.only_matching {
+    if let Err(e) = if args.build {
+        run_build(args)
+    } else if args.only_matching {
         run_onlymatching(args, colormode)
-    } else if args.json && args.deserialize {
-        runjson_and_deserialize(args, colormode)
     } else if args.json {
         runjson(args, colormode)
     } else {
@@ -123,6 +132,17 @@ fn main() -> Result<()> {
         return Err(e);
     }
     Ok(())
+}
+
+#[inline]
+fn run_build(args: Args) -> Result<()> {
+    // ensure the fst path does not already exist. don't want to overwrite
+    if Path::new(&args.fst).exists() {
+        bail!("fst path {} already existt. Please specify an alternate path or rename/delete existing fst.", &args.fst);
+    }
+    // currently, just grab the first input item
+    let reader = get_input(args.input.first().cloned()).expect("need some input");
+    build::build_fstsed(reader, &args.key.unwrap(), &args.fst)
 }
 
 #[inline]
@@ -152,7 +172,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<(), Error> {
     let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
 
     for path in args.input {
-        let reader = get_input(Some(path))?;
+        let mut reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
             // TODO: i cant figure out how to transform the std::io::error into anyhow
             process_line(line, &fsed, &mut out);
@@ -169,7 +189,7 @@ fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
     let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
 
     for path in args.input {
-        let reader = get_input(Some(path))?;
+        let mut reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
             for _ in fsed.find_iter(line) {
                 // just print rendered match and a new line
@@ -184,43 +204,16 @@ fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
 }
 
 #[inline]
-fn runjson(args: Args, colormode: ColorChoice) -> Result<(), Error> {
-    let mut out = stdout(colormode);
-    let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
-    let mut lastpos: usize = 0;
-
-    for path in args.input {
-        let reader = get_input(Some(path))?;
-        reader.for_byte_line_with_terminator(|line| {
-            lastpos = 0;
-            for (start, end) in jsonquotes_range_iter(line) {
-                // print from last spot to new start
-                out.write_all(&line[lastpos..start])?;
-                // process string
-                process_line(&line[start..end], &fsed, &mut out);
-                // advance position
-                lastpos = end;
-            }
-            // print remainder
-            out.write_all(&line[lastpos..])?;
-            Ok(true)
-        })?;
-    }
-    out.flush()?;
-    Ok(())
-}
-
-#[inline]
-fn runjson_and_deserialize(args: Args, _: ColorChoice) -> Result<(), Error> {
+fn runjson(args: Args, _: ColorChoice) -> Result<(), Error> {
     // cant colorize text inside of json strings
     let mut out = stdout(ColorChoice::Never);
     let fsed = fstsed::FstSed::new(args.fst, args.template, ColorChoice::Never);
 
     // temp buffer for holding processed string before re-serializing
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(BUFFERSIZE);
 
     for path in args.input {
-        let reader = get_input(Some(path))?;
+        let mut reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
             let mut lastpos: usize = 0;
             for (start, end) in jsonquotes_range_iter(line) {
