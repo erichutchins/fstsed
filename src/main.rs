@@ -190,7 +190,6 @@ fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
 
     for path in args.input {
         let mut reader = get_input(Some(path))?;
-        let reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
             for _ in fsed.find_iter(line) {
                 // just print rendered match and a new line
