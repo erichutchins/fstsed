@@ -16,7 +16,8 @@ where
     let mut vals: Vec<Vec<u8>> = Vec::new();
     let mut num_errors = 0;
 
-    input.for_byte_line_with_terminator(|line| {
+    // for this loop, we omit the line terminators
+    input.for_byte_line(|line| {
         if line.is_empty() {
             return Ok(false);
         }
@@ -34,18 +35,18 @@ where
     })?;
 
     eprintln!(
-        "Processed {} lines successfully with {num_errors} errors",
+        "Processed {} lines successfully with {num_errors} errors...",
         vals.len()
     );
-
+    eprintln!("Sorting keys to build the fst...");
     // sort the vector for fst
     vals.sort_unstable();
-    dbg!(&vals);
 
     // create file
     let wtr = io::BufWriter::new(File::create(output)?);
     let mut set = SetBuilder::new(wtr)?;
 
+    eprintln!("Assembling the fst...");
     // insert into set builder
     vals.iter().for_each(|line| {
         set.insert(line).expect("could not update fstsed database");

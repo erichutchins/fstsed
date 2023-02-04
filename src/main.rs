@@ -1,11 +1,12 @@
 use crate::jsonquotes::jsonquotes_range_iter;
-use anyhow::{Error, Result};
+use anyhow::{bail, Error, Result};
 use bstr::io::BufReadExt;
 use camino::Utf8PathBuf;
 use clap::{Parser, ValueEnum};
 use grep_cli::{self, stdout};
 use std::fs::File;
 use std::io::{self, BufReader, Write};
+use std::path::Path;
 use std::process::exit;
 use termcolor::ColorChoice;
 
@@ -58,17 +59,14 @@ struct Args {
     #[clap(short = 'f', value_name = "FST", value_hint = clap::ValueHint::FilePath)]
     fst: Utf8PathBuf,
 
-    /// Build a fst from json data instead of querying one
+    /// Build a fst from json data instead of querying one. Specify output path with
+    /// the -f --fst parameter.
     #[clap(long)]
     build: bool,
 
     /// When building, extract the given field to use as the key in the fst database
-    #[clap(short = 'k', long, value_name = "KEY")]
+    #[clap(short = 'k', long, value_name = "KEY", default_value = "key")]
     key: Option<String>,
-
-    /// Path to write the newly built fst to disk
-    #[clap(short = 's', long, value_name = "FST", value_hint = clap::ValueHint::FilePath)]
-    save: Option<Utf8PathBuf>,
 
     /// Specify the format of the fstsed match decoration. Field names are enclosed in {},
     /// for example "{field1} any fixed string {field2} & {field3}"
@@ -135,10 +133,15 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[inline]
 fn run_build(args: Args) -> Result<()> {
-    // currently, just grab the first item
+    // ensure the fst path does not already exist. don't want to overwrite
+    if Path::new(&args.fst).exists() {
+        bail!("fst path {} already existt. Please specify an alternate path or rename/delete existing fst.", &args.fst);
+    }
+    // currently, just grab the first input item
     let reader = get_input(args.input.first().cloned()).expect("need some input");
-    build::build_fstsed(reader, &args.key.unwrap(), &args.save.unwrap())
+    build::build_fstsed(reader, &args.key.unwrap(), &args.fst)
 }
 
 #[inline]
