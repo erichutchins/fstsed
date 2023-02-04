@@ -58,12 +58,16 @@ struct Args {
     #[clap(short = 'f', value_name = "FST", value_hint = clap::ValueHint::FilePath)]
     fst: Utf8PathBuf,
 
-    /// Build a fst from json data. Assumes there is a field named "key"
-    #[clap(short = 'b', value_name = "JSONL", value_hint = clap::ValueHint::FilePath)]
-    build: Option<Utf8PathBuf>,
+    /// Build a fst from json data instead of querying one
+    #[clap(long)]
+    build: bool,
+
+    /// When building, extract the given field to use as the key in the fst database
+    #[clap(short = 'k', long, value_name = "KEY")]
+    key: Option<String>,
 
     /// Path to write the newly built fst to disk
-    #[clap(short = 's', value_name = "FOO", value_hint = clap::ValueHint::FilePath)]
+    #[clap(short = 's', long, value_name = "FST", value_hint = clap::ValueHint::FilePath)]
     save: Option<Utf8PathBuf>,
 
     /// Specify the format of the fstsed match decoration. Field names are enclosed in {},
@@ -113,7 +117,9 @@ fn main() -> Result<()> {
     };
 
     // invoke the command!
-    if let Err(e) = if args.only_matching {
+    if let Err(e) = if args.build {
+        run_build(args)
+    } else if args.only_matching {
         run_onlymatching(args, colormode)
     } else if args.json {
         runjson(args, colormode)
@@ -127,6 +133,12 @@ fn main() -> Result<()> {
         return Err(e);
     }
     Ok(())
+}
+
+fn run_build(args: Args) -> Result<()> {
+    // currently, just grab the first item
+    let reader = get_input(args.input.first().cloned()).expect("need some input");
+    build::build_fstsed(reader, &args.key.unwrap(), &args.save.unwrap())
 }
 
 #[inline]

@@ -4,16 +4,16 @@ use camino::Utf8PathBuf;
 use fst::SetBuilder;
 use serde_json::Value;
 use std::fs::File;
-use std::io::{self, BufRead, Write};
-use std::{fs, str};
+use std::io;
+use std::str;
 
 const SENTINEL: u8 = 0;
 
-pub fn build_fstsed<R>(mut input: R, key: &str, output: Utf8PathBuf) -> Result<(), Error>
+pub fn build_fstsed<R>(mut input: R, key: &str, output: &Utf8PathBuf) -> Result<(), Error>
 where
-    R: BufRead,
+    R: BufReadExt,
 {
-    let mut vals: Vec<String> = Vec::new();
+    let mut vals: Vec<Vec<u8>> = Vec::new();
     let mut num_errors = 0;
 
     input.for_byte_line_with_terminator(|line| {
@@ -22,20 +22,24 @@ where
         }
         let jsonline = serde_json::from_slice(line).unwrap_or_else(|_| Value::default());
         if let Some(keyvalue) = jsonline.get(key).and_then(|v| v.as_str()) {
-            vals.push(format!(
-                "{}{}{}",
-                keyvalue,
-                SENTINEL,
-                str::from_utf8(&line).unwrap_or("")
-            ));
+            let mut tuple: Vec<u8> = Vec::new();
+            tuple.extend_from_slice(keyvalue.as_bytes());
+            tuple.push(SENTINEL);
+            tuple.extend_from_slice(line);
+            vals.push(tuple);
         } else {
             num_errors += 1;
         }
         Ok(true)
     })?;
 
+    eprintln!(
+        "Processed {} lines successfully with {num_errors} errors",
+        vals.len()
+    );
     // sort the vector for fst
     vals.sort_unstable();
+    dbg!(&vals);
 
     // create file
     let wtr = io::BufWriter::new(File::create(output)?);
