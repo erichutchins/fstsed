@@ -142,6 +142,7 @@ impl<'a> FstSed {
         if color == ColorChoice::Always {
             // if we are printing color, bookend the template with ansi red escapes
             template = format!("\x1b[1;31m{template}\x1b[0;0m");
+            template = format!("\x1b[1;31m{}\x1b[0;0m", template);
         }
 
         let fst = unsafe { mmap_fst(fstpath).expect("Error opening fst database") };

@@ -28,6 +28,7 @@ fn is_broken_pipe(err: &Error) -> bool {
     false
 }
 
+
 // via https://github.com/sstadick/crabz/blob/ce0d69efe0628c56b1fb7a1de46798b95eef90aa/src/main.rs#L62
 /// Get a buffered input reader from stdin or a file
 fn get_input(path: Option<Utf8PathBuf>) -> Result<Box<dyn BufReadExt + Send + 'static>> {
@@ -189,6 +190,7 @@ fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
 
     for path in args.input {
         let mut reader = get_input(Some(path))?;
+        let reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
             for _ in fsed.find_iter(line) {
                 // just print rendered match and a new line
