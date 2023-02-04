@@ -37,6 +37,7 @@ where
         "Processed {} lines successfully with {num_errors} errors",
         vals.len()
     );
+
     // sort the vector for fst
     vals.sort_unstable();
     dbg!(&vals);
