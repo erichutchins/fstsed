@@ -2,8 +2,17 @@
 name = "fstsed"
 version = "0.1.0"
 edition = "2021"
+description = "Find and replace/decorate text at scale using finite state transducers (fst)"
+authors = ["Eric Hutchins"]
+license = "Unlicense/MIT"
+repository = "https://github.com/erichutchins/fstsed"
+readme = "README.md"
+categories = ["text-processing", "command-line-interface"]
+keywords = ["cli", "fst", "sed", "dfir"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "fstsed"
+path = "src/main.rs"
 
 [profile.release]
 debug = true
