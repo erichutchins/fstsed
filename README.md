@@ -27,6 +27,8 @@ When would I use this?
 
 - **Indicator database log analysis** - Network defense indicators can take many forms and indicator databases record many dimensions of analyst selected metadata (e.g., attribution, priority, provenance, alerting suitability). Usually, it takes a full blown SIEM to add this enrichment to log analysis, but fstsed gives you a fast ad hoc alternative.
 
+- **Language translation** - Not full translation, but enriching given key words or phrases in place with translation in your native language.
+
 ### Note
 - Does not match partial strings -- search terms must begin and end with a non-word boundary character
 - Longest search terms are matched -- if you have ABC and ABCDE search terms and the text ABCDE, just the ABCDE match occurs, not ABC
@@ -69,7 +71,7 @@ Options:
 
 ### Volexity IOC database
 
-Let's use Volexity github repo as an example IOC database. I used a bit of python to convert multiple csvs into a single json file.
+Let's use Volexity's github repo as an example IOC database. I used a bit of python to convert multiple csvs into a single json file.
 
 1. **Get the data**
 ```
@@ -97,12 +99,14 @@ In [6]: with open("volexity.json", "w") as f:
 2.1. **Using fstsed**
 
 ```
-cat volexity.json | fstsed -f volexity.fst -k value
+fstsed -f volexity.fst -k value volexity.json
+# or pipe in from stdin
+cat volexity.json | fstsed -f volexity.fst -k value 
 ```
 
 2.2. **Using fst itself**
 
-The way we encode the database is to join key and value with a null byte. The jq function extracts the `.value` of the indicator, prints a null `\u0000`, and then prints the whole record back out as json. Then the fst bin utility does the work of making the transducer itself.
+To build it manually, first know that way we encode the database is to join key and value with a null byte. That's the only difference between a fstsed fst and a fst fst. The jq function extracts the `.value` of the indicator, prints a null `\u0000`, and then prints the whole record back out as json. Then the fst bin utility does the work of making the transducer itself.
 
 ```
 cat volexity.json | jq -r '.value + "\u0000" + tojson' | fst set - volexity.fst
@@ -123,4 +127,24 @@ Specify a template, which can include prose/fixed strings as well as and top lev
 echo "test of avsvmcloud.com metadata" | fstsed -f volexity.fst --template "{key} (a {type} from {path} report)"
 test of avsvmcloud.com (a hostname from 2020/2020-12-14 - DarkHalo Leverages SolarWinds Compromise to Breach Organizations/indicators/indicators.csv report) metadata
 ```
+
+### Highlighting Burmese
+
+```
+; cat burmese.json
+{"key":"ဗိုလခုပမူးကီး","translated":"Senior General of Myanmar Army"}
+
+; cat burmese.json fstsed -f myanmar.fst --build -k key
+```
+
+Then, taking the lede from [BBC article](https://www.bbc.com/burmese/burma-57432310) as a test case:
+
+```
+; fstsed -f myanmar.fst bbc.txt --template "<{key}> ({translated})"
+```
+
+> လနခဲ့တဲ့ ၅ နစက တပမတောကာကယရေးဦးစီးခုပ ရဲ့သကတမးဟာ အကန့အသတမရိတဲ့ သဘောဖစနေလို့ ၆၅ နစကန့သတပီးပငခဲ့တယလို့ **<ဗိုလခုပမူးကီး> (Senior General of Myanmar Army)** မငးအောငလိုငက ပောခဲ့ပီး သူ့အသက းကာ အဲ့ဒီ့ကန့သတခကကို ပယဖကလိုကတဲ့ အတက တပမတောကာကယရေးဦးစီးခုပသကတမးဟာ အကန့အသတမဲ့ ပနဖစသားပတယ။
+
+Even if I can't read any of the Burmese, I still know which key phrase matched, what that phrase means in my native tongue, and where generally the match occurred in the document.
+
 
