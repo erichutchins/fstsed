@@ -15,11 +15,13 @@ where
 {
     let mut vals: Vec<Vec<u8>> = Vec::new();
     let mut num_errors = 0;
+    let mut num_blanks = 0;
 
     // for this loop, we omit the line terminators
     input.for_byte_line(|line| {
         if line.is_empty() {
-            return Ok(false);
+            num_blanks += 1;
+            return Ok(true);
         }
         let jsonline = serde_json::from_slice(line).unwrap_or_else(|_| Value::default());
         if let Some(keyvalue) = jsonline.get(key).and_then(|v| v.as_str()) {
@@ -35,7 +37,7 @@ where
     })?;
 
     eprintln!(
-        "Processed {} lines successfully with {num_errors} errors...",
+        "Processed {} lines successfully with {num_errors} errors and {num_blanks} blank lines...",
         vals.len()
     );
     eprintln!("Sorting keys to build the fst...");
