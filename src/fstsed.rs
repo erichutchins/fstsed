@@ -12,16 +12,20 @@ use termcolor::ColorChoice;
 
 const SENTINEL: u8 = 0;
 
-lazy_static! {
-    static ref RE_NONWORD: Regex = Regex::new(r#"(?i-u)[, \t\a\n:="]"#).unwrap();
-}
-
-lazy_static! {
-    static ref RE_UNICODE_BOUNDARY: Regex = Regex::new(r"^\W").unwrap();
-}
-
+// RE_START and RE_NONWORD are used to find candidate positions
+// to evaluate for fst keyword matches
+// Note how these disable unicode matching (?i-u). key perf improvement
 lazy_static! {
     static ref RE_START: Regex = Regex::new(r"(?i-u)^").unwrap();
+}
+lazy_static! {
+    static ref RE_NONWORD: Regex = Regex::new(r#"(?m)(?i-u)[, \t\a\n:="]"#).unwrap();
+}
+// RE_UNICODE_BOUNDARY is used within the fstmatch algorithm to validate
+// that the end of the match is a boundary and therefore we are not inside
+// a word
+lazy_static! {
+    static ref RE_UNICODE_BOUNDARY: Regex = Regex::new(r"^\W").unwrap();
 }
 
 /// FstMatch represents a single match of a fst key in a haystack
@@ -62,6 +66,7 @@ pub struct FstMatches<'f, 'a> {
     fstsed: &'f FstSed,
     haystack: &'a [u8],
     skip: usize,
+    last_matchlen: usize,
     // chain the two regexes iters together to ensure we can search for matches at the beginning of
     // a line as well as when word boundaries occur at beginning of line. both might match at pos
     // 0, but operate in different modes
@@ -75,6 +80,7 @@ impl<'f, 'a> FstMatches<'f, 'a> {
             fstsed,
             haystack,
             skip: 0,
+            last_matchlen: 0,
             reiter: RE_START
                 .find_iter(haystack)
                 .chain(RE_NONWORD.find_iter(haystack)),
@@ -95,16 +101,25 @@ impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
         // byte if it is in the fst. for all other iterations, we are looking for word boundaries
         // and thus want to test if the NEXT byte is in the fst
         while m.is_some()
-            && self
+            && (
+                // our new boundary candidate is within our previous match range
+                (m.unwrap().start() + self.skip) < (self.fstsed.get_match_start() + self.fstsed.get_match_len())
+                // or we dont have a fstsed match at all
+                || self
                 .fstsed
                 .longest_match_at(self.haystack, m.unwrap().start() + self.skip)
                 .is_none()
+            )
         {
             // advance loop until we find a fstsed match or exhaust the iterator
             m = self.reiter.next();
+            // avoid branching of testing "is this the first loop" and just set
+            // to 1 over and over again.
             self.skip = 1;
         }
-        // return just position of the match start, if any
+
+        // return just position of the match start
+        // if m is None, the "and" will fail
         m.and(Some(self.fstsed.get_match_start()))
     }
 }
@@ -200,7 +215,6 @@ impl<'a> FstSed {
     pub fn longest_match_at(&self, text: &'a [u8], start: usize) -> Option<usize> {
         self.keycache.borrow_mut().clear();
         self.valuecache.borrow_mut().clear();
-        *self.startcache.borrow_mut() = start;
 
         let mut node = self.fst.root();
         let mut out = Output::zero();
@@ -236,6 +250,7 @@ impl<'a> FstSed {
                         self.keycache
                             .borrow_mut()
                             .extend_from_slice(&value[..i + 1]);
+                        *self.startcache.borrow_mut() = start;
                     }
                 }
             } else {
