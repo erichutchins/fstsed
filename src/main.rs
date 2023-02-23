@@ -28,7 +28,6 @@ fn is_broken_pipe(err: &Error) -> bool {
     false
 }
 
-
 // via https://github.com/sstadick/crabz/blob/ce0d69efe0628c56b1fb7a1de46798b95eef90aa/src/main.rs#L62
 /// Get a buffered input reader from stdin or a file
 fn get_input(path: Option<Utf8PathBuf>) -> Result<Box<dyn BufReadExt + Send + 'static>> {

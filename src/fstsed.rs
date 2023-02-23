@@ -8,6 +8,7 @@ use regex::bytes::Regex;
 use serde_json::Value;
 use std::cell::RefCell;
 use std::fs::File;
+use std::iter::Peekable;
 use termcolor::ColorChoice;
 
 const SENTINEL: u8 = 0;
@@ -66,12 +67,12 @@ pub struct FstMatches<'f, 'a> {
     fstsed: &'f FstSed,
     haystack: &'a [u8],
     skip: usize,
-    last_matchlen: usize,
     // chain the two regexes iters together to ensure we can search for matches at the beginning of
     // a line as well as when word boundaries occur at beginning of line. both might match at pos
     // 0, but operate in different modes
     // TODO: would be better to use a Generic here...
-    reiter: std::iter::Chain<regex::bytes::Matches<'f, 'a>, regex::bytes::Matches<'f, 'a>>,
+    reiter:
+        Peekable<std::iter::Chain<regex::bytes::Matches<'f, 'a>, regex::bytes::Matches<'f, 'a>>>,
 }
 
 impl<'f, 'a> FstMatches<'f, 'a> {
@@ -80,10 +81,10 @@ impl<'f, 'a> FstMatches<'f, 'a> {
             fstsed,
             haystack,
             skip: 0,
-            last_matchlen: 0,
             reiter: RE_START
                 .find_iter(haystack)
-                .chain(RE_NONWORD.find_iter(haystack)),
+                .chain(RE_NONWORD.find_iter(haystack))
+                .peekable(),
         }
     }
 }
@@ -96,20 +97,16 @@ impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
 
     fn next(&mut self) -> Option<usize> {
         let mut m = self.reiter.next();
+
         // self.skip will be 0 only for the very first iteration. this is because matching at the
         // beginning of the line is a slightly different operation: we want to test that very first
         // byte if it is in the fst. for all other iterations, we are looking for word boundaries
         // and thus want to test if the NEXT byte is in the fst
         while m.is_some()
-            && (
-                // our new boundary candidate is within our previous match range
-                (m.unwrap().start() + self.skip) < (self.fstsed.get_match_start() + self.fstsed.get_match_len())
-                // or we dont have a fstsed match at all
-                || self
+            && self
                 .fstsed
                 .longest_match_at(self.haystack, m.unwrap().start() + self.skip)
                 .is_none()
-            )
         {
             // advance loop until we find a fstsed match or exhaust the iterator
             m = self.reiter.next();
@@ -118,9 +115,25 @@ impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
             self.skip = 1;
         }
 
+        // we have two circumstances here: we've run out of reiter match positions
+        // or we have a real match. for the former, we are done: return None and break
+        // our iterator
+        if m.is_none() {
+            return None;
+        }
+
+        // when we have a match, we must advance the reiter position
+        // past the point of the last match length before we can resume searching
+        while self.reiter.peek().is_some()
+            && (self.reiter.peek().unwrap().start())
+                <= (self.fstsed.get_match_start() + self.fstsed.get_match_len())
+        {
+            self.reiter.next();
+        }
+
         // return just position of the match start
         // if m is None, the "and" will fail
-        m.and(Some(self.fstsed.get_match_start()))
+        Some(self.fstsed.get_match_start())
     }
 }
 
@@ -210,11 +223,18 @@ impl<'a> FstSed {
         FstMatches::new(self, text)
     }
 
+    #[inline]
+    pub fn clear(&self) {
+        self.keycache.borrow_mut().clear();
+        self.valuecache.borrow_mut().clear();
+        *self.startcache.borrow_mut() = 0;
+    }
+
     // adapted from https://github.com/BurntSushi/fst/pull/104/files
     #[inline]
     pub fn longest_match_at(&self, text: &'a [u8], start: usize) -> Option<usize> {
-        self.keycache.borrow_mut().clear();
-        self.valuecache.borrow_mut().clear();
+        // clear all the caches
+        // self.clear();
 
         let mut node = self.fst.root();
         let mut out = Output::zero();
@@ -246,6 +266,11 @@ impl<'a> FstSed {
                             }
                         }
 
+                        if last_match.is_some() {
+                            // we must have found a longer match, so we must clear
+                            // our caches
+                            self.clear();
+                        }
                         last_match = Some(i + 1);
                         self.keycache
                             .borrow_mut()
