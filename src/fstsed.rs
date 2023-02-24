@@ -132,7 +132,6 @@ impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
         }
 
         // return just position of the match start
-        // if m is None, the "and" will fail
         Some(self.fstsed.get_match_start())
     }
 }
@@ -155,6 +154,9 @@ unsafe fn mmap_fst(path: Utf8PathBuf) -> Result<Fst<Mmap>, Error> {
     Ok(fst)
 }
 
+/// Helper function to determine if user-specified template string will require
+/// json deserialization. Returns true if the template contains and {var} beyond
+/// {key} and [value}
 fn test_for_json_keys(template: &str) -> bool {
     template
         .split('{')
@@ -233,9 +235,6 @@ impl<'a> FstSed {
     // adapted from https://github.com/BurntSushi/fst/pull/104/files
     #[inline]
     pub fn longest_match_at(&self, text: &'a [u8], start: usize) -> Option<usize> {
-        // clear all the caches
-        // self.clear();
-
         let mut node = self.fst.root();
         let mut out = Output::zero();
         let mut last_match = None;
@@ -266,11 +265,8 @@ impl<'a> FstSed {
                             }
                         }
 
-                        if last_match.is_some() {
-                            // we must have found a longer match, so we must clear
-                            // our caches
-                            self.clear();
-                        }
+                        // clear and update all the caches
+                        self.clear();
                         last_match = Some(i + 1);
                         self.keycache
                             .borrow_mut()
