@@ -2,6 +2,10 @@ use itermore::prelude::*;
 use memchr::memchr2_iter;
 use memchr::Memchr2;
 
+/// Identifies the structural double quotation marks bounding strings in json text.
+/// Searches for all double quotes and backslashes simultaneously using memchr2. Then, for each
+/// match, record state to determine if the double quote was escaped by the backslash or is a
+/// real structural quote. The iterator returns a flat, linear feed of structural quote indices
 pub struct JsonQuotes<'a> {
     haystack: &'a [u8],
     iter: Memchr2<'a>,
@@ -51,12 +55,22 @@ impl<'a> Iterator for JsonQuotes<'a> {
     }
 }
 
+/// Isolate just the ranges of strings in json to avoid deserializing the entire structure. Uses
+/// memchr2 to find all doublequotes and backslashes simulktaneously and tracks state to determine
+/// when the backslashes escape the quotes.
+///
+/// This function returns an iterator of (start, end) tuples of the string ranges. *Note* the
+/// indices include the quotation marks themselves!
 #[inline]
 pub fn jsonquotes_range_iter<'a>(
     haystack: &'a [u8],
 ) -> Box<dyn Iterator<Item = (usize, usize)> + 'a> {
     // box magic from https://stackoverflow.com/a/31904898
     Box::new(
+        // Rather than have JsonQuotes bother with knowing if a quote is an open or close,
+        // the indices come to us in a flat series and we just iterate in chunks of
+        // two giving us each start, stop index. We add 1 so when this tuple is used to
+        // retrieve the str, both open and close quotes are themselves included
         JsonQuotes::new(haystack)
             .into_iter()
             .array_chunks::<2>()
