@@ -55,11 +55,11 @@ struct Args {
     #[clap(short = 'C', long, value_enum, default_value_t = ArgsColorChoice::Auto)]
     color: ArgsColorChoice,
 
-    /// Specify fst db to use
+    /// Specify fst db to use in search or build modes
     #[clap(short = 'f', value_name = "FST", value_hint = clap::ValueHint::FilePath)]
     fst: Utf8PathBuf,
 
-    /// Build a fst from json data instead of querying one. Specify output path with
+    /// Build mode. Build a fst from json data instead of querying one. Specify output path with
     /// the -f --fst parameter. Only first file input parameter or stdin is used to make
     /// the fst
     #[clap(long)]
@@ -74,13 +74,14 @@ struct Args {
     #[clap(short, long)]
     template: Option<String>,
 
-    /// Json search mode. Fstsed will only search inside quoted json strings
-    /// and additionally deserialize/decode json strings before searching.
-    /// Ensures all template decorations are properly encoded for subsequent json processing
+    /// Json search mode. Fstsed will treat input as json, searching only inside quoted json strings.
+    /// All strings are deserialized/decoded before json before searching, and all template
+    /// decorations are properly json-encoded in the output for subsequent processing
     #[clap(short, long)]
     json: bool,
 
-    /// Input file(s) to process. Leave empty or use "-" to read from stdin
+    /// Input file(s) to process (either to search or to use to build the fst). Leave empty or
+    /// use "-" to read from stdin
     #[clap(value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
     input: Vec<Utf8PathBuf>,
 }
