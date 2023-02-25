@@ -60,11 +60,12 @@ struct Args {
     fst: Utf8PathBuf,
 
     /// Build a fst from json data instead of querying one. Specify output path with
-    /// the -f --fst parameter.
+    /// the -f --fst parameter. Only first file input parameter or stdin is used to make
+    /// the fst
     #[clap(long)]
     build: bool,
 
-    /// When building, extract the given field to use as the key in the fst database
+    /// When building a fst, extract the given json field to use as the key in the fst database
     #[clap(short = 'k', long, value_name = "KEY", default_value = "key")]
     key: Option<String>,
 
@@ -73,8 +74,8 @@ struct Args {
     #[clap(short, long)]
     template: Option<String>,
 
-    /// Specify json input. Fstsed will only search inside quoted json strings
-    /// additionally deserialize/decode json strings before searching.
+    /// Json search mode. Fstsed will only search inside quoted json strings
+    /// and additionally deserialize/decode json strings before searching.
     /// Ensures all template decorations are properly encoded for subsequent json processing
     #[clap(short, long)]
     json: bool,
@@ -137,13 +138,15 @@ fn main() -> Result<()> {
 fn run_build(args: Args) -> Result<()> {
     // ensure the fst path does not already exist. don't want to overwrite
     if Path::new(&args.fst).exists() {
-        bail!("fst path {} already existt. Please specify an alternate path or rename/delete existing fst.", &args.fst);
+        bail!("fst path {} already exists. Please specify an alternate path or rename/delete existing fst.", &args.fst);
     }
     // currently, just grab the first input item
     let reader = get_input(args.input.first().cloned()).expect("need some input");
     build::build_fstsed(reader, &args.key.unwrap(), &args.fst)
 }
 
+// Generic processing function that we use in all modes to search the given
+// input wth the given fstsed db and write to the given output
 #[inline]
 fn process_line<W>(input: &[u8], fsed: &fstsed::FstSed, out: &mut W) -> Result<(), Error>
 where
@@ -165,6 +168,7 @@ where
     Ok(())
 }
 
+// Basic mode
 #[inline]
 fn run(args: Args, colormode: ColorChoice) -> Result<(), Error> {
     let mut out = stdout(colormode);
@@ -182,6 +186,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<(), Error> {
     Ok(())
 }
 
+// Print just the search matches rather than the entire line
 #[inline]
 fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
     let mut out = stdout(colormode);
@@ -202,6 +207,8 @@ fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
     Ok(())
 }
 
+// Json search mode. Use the jsonquotes utility in this crate to find and deserialize just the
+// json strings in the input. Also ensure all formatted output is properly json encoded.
 #[inline]
 fn runjson(args: Args, _: ColorChoice) -> Result<(), Error> {
     // cant colorize text inside of json strings
