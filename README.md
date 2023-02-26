@@ -128,27 +128,6 @@ echo "test of avsvmcloud.com metadata" | fstsed -f volexity.fst --template "{key
 test of avsvmcloud.com (a hostname from 2020/2020-12-14 - DarkHalo Leverages SolarWinds Compromise to Breach Organizations/indicators/indicators.csv report) metadata
 ```
 
-### Highlighting Burmese
-
-```
-; cat burmese.json
-{"key":"ဗိုလခုပမူးကီး","translated":"Senior General of Myanmar Army"}
-
-; cat burmese.json fstsed -f myanmar.fst --build -k key
-```
-
-Then, taking the lede from [BBC article](https://www.bbc.com/burmese/burma-57432310) as a test case:
-
-```
-; fstsed -f myanmar.fst bbc.txt --template "<{key}> ({translated})"
-```
-
-> လနခဲ့တဲ့ ၅ နစက တပမတောကာကယရေးဦးစီးခုပ ရဲ့သကတမးဟာ အကန့အသတမရိတဲ့ သဘောဖစနေလို့ ၆၅ နစကန့သတပီးပငခဲ့တယလို့ **<ဗိုလခုပမူးကီး> (Senior General of Myanmar Army)** မငးအောငလိုငက ပောခဲ့ပီး သူ့အသက းကာ အဲ့ဒီ့ကန့သတခကကို ပယဖကလိုကတဲ့ အတက တပမတောကာကယရေးဦးစီးခုပသကတမးဟာ အကန့အသတမဲ့ ပနဖစသားပတယ။
-
-Even if I can't read any of the Burmese, I still know which key phrase matched, what that phrase means in my native tongue, and where generally the match occurred in the document.
-
-
-
 4. **Benchmarks**
 
 Using the volexity fst db on 30k lines of suricata eve json logs from a home network, we can outperform grep for searching. Ripgrep with fixed-string `-F`is the absolute fastest, but there is significant slow down when ensuring matches occur on word boundaries `-w`. Note in this contrived example, there were not matches of the search terms in the data; this is showing the search-only speeds.
@@ -188,3 +167,24 @@ Summary
     2.74 ± 0.20 times faster than 'grep -Fwf volexity.ioc 30k.log'
     3.40 ± 0.22 times faster than 'fstsed -f volexity.fst --json 30k.log'
 ```
+
+### Example: Highlighting Translations
+
+```
+; cat burmese.json
+{"key":"ဗိုလခုပမူးကီး","translated":"Senior General of Myanmar Army"}
+
+; cat burmese.json fstsed -f myanmar.fst --build -k key
+```
+
+Then, taking the lede from [BBC article](https://www.bbc.com/burmese/burma-57432310) as a test case:
+
+```
+; fstsed -f myanmar.fst bbc.txt --template "<{key}> ({translated})"
+```
+
+> လနခဲ့တဲ့ ၅ နစက တပမတောကာကယရေးဦးစီးခုပ ရဲ့သကတမးဟာ အကန့အသတမရိတဲ့ သဘောဖစနေလို့ ၆၅ နစကန့သတပီးပငခဲ့တယလို့ **<ဗိုလခုပမူးကီး> (Senior General of Myanmar Army)** မငးအောငလိုငက ပောခဲ့ပီး သူ့အသက းကာ အဲ့ဒီ့ကန့သတခကကို ပယဖကလိုကတဲ့ အတက တပမတောကာကယရေးဦးစီးခုပသကတမးဟာ အကန့အသတမဲ့ ပနဖစသားပတယ။
+
+Even if I can't read any of the Burmese, I still know which key phrase matched, what that phrase means in my native tongue, and where generally the match occurred in the document.
+
+
