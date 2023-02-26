@@ -148,3 +148,43 @@ Then, taking the lede from [BBC article](https://www.bbc.com/burmese/burma-57432
 Even if I can't read any of the Burmese, I still know which key phrase matched, what that phrase means in my native tongue, and where generally the match occurred in the document.
 
 
+
+4. **Benchmarks**
+
+Using the volexity fst db on 30k lines of suricata eve json logs from a home network, we can outperform grep for searching. Ripgrep with fixed-string `-F`is the absolute fastest, but there is significant slow down when ensuring matches occur on word boundaries `-w`. Note in this contrived example, there were not matches of the search terms in the data; this is showing the search-only speeds.
+
+```shell
+; hyperfine -i -w 10 'fstsed -f volexity.fst 30k.log' 'rg -F -w -f volexity.ioc --passthru 30k.log' 'rg -F -f volexity.ioc --passthru 30k.log' 'grep -Fwf volexity.ioc 30k.log' 'fstsed -f volexity.fst --json 30k.log'
+Benchmark 1: fstsed -f volexity.fst 30k.log
+  Time (mean ± σ):     290.7 ms ±   9.2 ms    [User: 281.4 ms, System: 8.5 ms]
+  Range (min … max):   276.6 ms … 303.2 ms    10 runs
+ 
+Benchmark 2: rg -F -w -f volexity.ioc --passthru 30k.log
+  Time (mean ± σ):     343.9 ms ±   9.6 ms    [User: 321.6 ms, System: 20.5 ms]
+  Range (min … max):   335.5 ms … 364.9 ms    10 runs
+ 
+  Warning: Ignoring non-zero exit code.
+ 
+Benchmark 3: rg -F -f volexity.ioc --passthru 30k.log
+  Time (mean ± σ):     160.0 ms ±   9.0 ms    [User: 132.7 ms, System: 26.3 ms]
+  Range (min … max):   144.9 ms … 180.6 ms    18 runs
+ 
+  Warning: Ignoring non-zero exit code.
+ 
+Benchmark 4: grep -Fwf volexity.ioc 30k.log
+  Time (mean ± σ):     438.7 ms ±  21.2 ms    [User: 428.9 ms, System: 9.1 ms]
+  Range (min … max):   414.0 ms … 478.2 ms    10 runs
+ 
+  Warning: Ignoring non-zero exit code.
+ 
+Benchmark 5: fstsed -f volexity.fst --json 30k.log
+  Time (mean ± σ):     543.8 ms ±  17.1 ms    [User: 532.8 ms, System: 8.0 ms]
+  Range (min … max):   522.9 ms … 579.8 ms    10 runs
+ 
+Summary
+  'rg -F -f volexity.ioc --passthru 30k.log' ran
+    1.82 ± 0.12 times faster than 'fstsed -f volexity.fst 30k.log'
+    2.15 ± 0.13 times faster than 'rg -F -w -f volexity.ioc --passthru 30k.log'
+    2.74 ± 0.20 times faster than 'grep -Fwf volexity.ioc 30k.log'
+    3.40 ± 0.22 times faster than 'fstsed -f volexity.fst --json 30k.log'
+```
