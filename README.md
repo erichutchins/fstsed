@@ -50,19 +50,21 @@ cargo build --release
 ## Usage 
 
 ```
+Find and replace/decorate text at scale using finite state transducers (fst)
+
 Usage: fstsed [OPTIONS] -f <FST> [FILE]...
 
 Arguments:
-  [FILE]...  Input file(s) to process. Leave empty or use "-" to read from stdin
+  [FILE]...  Input file(s) to process (either to search or to use to build the fst). Leave empty or use "-" to read from stdin
 
 Options:
   -o, --only-matching        Show only nonempty parts of lines that match
   -C, --color <COLOR>        Use markers to highlight the matching strings [default: auto] [possible values: always, never, auto]
-  -f <FST>                   Specify fst db to use
-      --build                Build a fst from json data instead of querying one. Specify output path with the -f --fst parameter
-  -k, --key <KEY>            When building, extract the given field to use as the key in the fst database [default: key]
+  -f <FST>                   Specify fst db to use in search or build modes
+      --build                Build mode. Build a fst from json data instead of querying one. Specify output path with the -f --fst parameter. Only first file input parameter or stdin is used to make the fst
+  -k, --key <KEY>            When building a fst, extract the given json field to use as the key in the fst database [default: key]
   -t, --template <TEMPLATE>  Specify the format of the fstsed match decoration. Field names are enclosed in {}, for example "{field1} any fixed string {field2} & {field3}"
-  -j, --json                 Specify json input. Fstsed will only search inside quoted json strings additionally deserialize/decode json strings before searching. Ensures all template decorations are properly encoded for subsequent json processing
+  -j, --json                 Json search mode. Fstsed will treat input as json, searching only inside quoted json strings. All strings are deserialized/decoded before json before searching, and all template decorations are properly json-encoded in the output for subsequent processing
   -h, --help                 Print help
   -V, --version              Print version
 ```
@@ -96,15 +98,15 @@ In [6]: with open("volexity.json", "w") as f:
 
 2. **Build FST database**
 
-2.1. **Using fstsed**
+2.1. **Build using fstsed**
 
 ```
-fstsed -f volexity.fst -k value volexity.json
+fstsed --build -f volexity.fst -k value volexity.json
 # or pipe in from stdin
-cat volexity.json | fstsed -f volexity.fst -k value 
+cat volexity.json | fstsed --build -f volexity.fst -k value 
 ```
 
-2.2. **Using fst itself**
+2.2. **Build using fst bin itself**
 
 To build it manually, first know that way we encode the database is to join key and value with a null byte. That's the only difference between a fstsed fst and a fst fst. The jq function extracts the `.value` of the indicator, prints a null `\u0000`, and then prints the whole record back out as json. Then the fst bin utility does the work of making the transducer itself.
 
@@ -130,7 +132,7 @@ test of avsvmcloud.com (a hostname from 2020/2020-12-14 - DarkHalo Leverages Sol
 
 4. **Benchmarks**
 
-Using the volexity fst db on 30k lines of suricata eve json logs from a home network, we can outperform grep for searching. Ripgrep with fixed-string `-F`is the absolute fastest, but there is significant slow down when ensuring matches occur on word boundaries `-w`. Note in this contrived example, there were not matches of the search terms in the data; this is showing the search-only speeds.
+Using the volexity fst db on 30k lines of suricata eve json logs from a home network, we can outperform grep for searching. Ripgrep with fixed-string `-F`is the absolute fastest, but there is significant slow down when ensuring matches occur on word boundaries `-w`. Note in this contrived example, there were not matches of the search terms in the data; this is showing the search-only speeds. (hyperfine is ignoring the non-zero exit code because rg and grep did not find any matches)
 
 ```shell
 ; hyperfine -i -w 10 'fstsed -f volexity.fst 30k.log' 'rg -F -w -f volexity.ioc --passthru 30k.log' 'rg -F -f volexity.ioc --passthru 30k.log' 'grep -Fwf volexity.ioc 30k.log' 'fstsed -f volexity.fst --json 30k.log'
