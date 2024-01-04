@@ -5,7 +5,7 @@ use camino::Utf8PathBuf;
 use clap::{Parser, ValueEnum};
 use grep_cli::{self, stdout};
 use std::fs::File;
-use std::io::{self, BufReader, Write};
+use std::io::{self, BufReader, IsTerminal, Write};
 use std::path::Path;
 use std::process::exit;
 use termcolor::ColorChoice;
@@ -106,7 +106,7 @@ fn main() -> Result<()> {
     // or otherwise don't color if it's to a file or another pipe
     let colormode = match args.color {
         ArgsColorChoice::Auto => {
-            if grep_cli::is_tty_stdout() {
+            if std::io::stdout().is_terminal() {
                 ColorChoice::Always
             } else {
                 ColorChoice::Never
