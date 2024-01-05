@@ -179,7 +179,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<(), Error> {
         let mut reader = get_input(Some(path))?;
         reader.for_byte_line_with_terminator(|line| {
             // TODO: i cant figure out how to transform the std::io::error into anyhow
-            process_line(line, &fsed, &mut out);
+            let _ = process_line(line, &fsed, &mut out);
             Ok(true)
         })?;
     }
@@ -232,7 +232,7 @@ fn runjson(args: Args, _: ColorChoice) -> Result<(), Error> {
                     Ok(s) => {
                         buf.clear();
                         // reuse vec buf to collect the processed line
-                        process_line(s.as_bytes(), &fsed, &mut buf);
+                        let _ = process_line(s.as_bytes(), &fsed, &mut buf);
                         // serialize new json string directly to the output
                         serde_json::to_writer(&mut out, std::str::from_utf8(&buf).unwrap())?;
                     }
