@@ -72,7 +72,6 @@ pub fn jsonquotes_range_iter<'a>(
         // two giving us each start, stop index. We add 1 so when this tuple is used to
         // retrieve the str, both open and close quotes are themselves included
         JsonQuotes::new(haystack)
-            .into_iter()
             .array_chunks::<2>()
             .map(move |[a, b]| (a, b + 1)),
     )

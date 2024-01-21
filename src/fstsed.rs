@@ -117,7 +117,9 @@ impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
 
         // we have two circumstances here: we've run out of reiter match positions
         // or we have a real match. for the former, we are done: return None and break
-        // our iterator
+        // our iterator. (Clippy thinks this should just be m? but that seems really
+        // hard to comprehend what's happening)
+        #[allow(clippy::question_mark)]
         if m.is_none() {
             return None;
         }
