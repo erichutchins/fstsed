@@ -28,7 +28,7 @@ incremental = false
 anyhow = "1.0.79"
 bstr = "1.3.0"
 camino = "1.1.6"
-clap = { version = "4.4.13", features = ["derive", "cargo"] }
+clap = { version = "4.4.18", features = ["derive", "cargo"] }
 fst = "0.4.7"
 grep-cli = "0.1.10"
 itermore = { version = "0.7.1",  default-features = false, features = ["array_chunks"]}
@@ -36,6 +36,6 @@ lazy_static = "1.4.0"
 memchr = "2.5.0"
 memmap2 = "0.9.3"
 microtemplate = "1.0.3"
-regex = "1.10.2"
+regex = "1.10.3"
 serde_json = "1.0.111"
-termcolor = "1.2.0"
+termcolor = "1.4.1"
