@@ -1,6 +1,6 @@
 [package]
 name = "fstsed"
-version = "0.2.0" #:version
+version = "0.2.1" #:version
 authors = ["Eric Hutchins"]
 description = "Find and replace/decorate text at scale using finite state transducers (fst)"
 homepage = "https://github.com/erichutchins/fstsed"
