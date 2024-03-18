@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::fs::File;
 use std::io;
 use std::str;
+use zstd::stream::copy_encode;
 
 const SENTINEL: u8 = 0;
 
@@ -25,11 +26,20 @@ where
         }
         let jsonline = serde_json::from_slice(line).unwrap_or_else(|_| Value::default());
         if let Some(keyvalue) = jsonline.get(key).and_then(|v| v.as_str()) {
-            let mut tuple: Vec<u8> = Vec::new();
+            // conservative sizing - allocate enough memory for key plus full line
+            let mut tuple: Vec<u8> = Vec::with_capacity(keyvalue.len() + line.len());
+
+            // the fst key itself
             tuple.extend_from_slice(keyvalue.as_bytes());
+            // the sentinel to delineate key from data
             tuple.push(SENTINEL);
-            tuple.extend_from_slice(line);
-            vals.push(tuple);
+            // zstd compress the line and write directly into output tuple
+            if copy_encode(line, &mut tuple, 3).is_err() {
+                num_errors += 1;
+            } else {
+                // push the assembled tuple to our vector of vectors
+                vals.push(tuple);
+            }
         } else {
             num_errors += 1;
         }
