@@ -65,12 +65,14 @@ struct Args {
     #[clap(long)]
     build: bool,
 
-    /// When building a fst, extract the given json field to use as the key in the fst database
+    /// When building a fst, extract the given json field to use as the key in the fst database.
+    /// Key may also be provided as a jsonpointer, e.g. /obj/array/1/item
     #[clap(short = 'k', long, value_name = "KEY", default_value = "key")]
     key: Option<String>,
 
     /// Specify the format of the fstsed match decoration. Field names are enclosed in {},
-    /// for example "{field1} any fixed string {field2} & {field3}"
+    /// for example "{field1} any fixed string {field2} & {field3}". Fields may be json keys
+    /// or jsonpointers ({/obj/array/1/item})
     #[clap(short, long)]
     template: Option<String>,
 
@@ -79,6 +81,11 @@ struct Args {
     /// decorations are properly json-encoded in the output for subsequent processing
     #[clap(short, long)]
     json: bool,
+
+    /// Set this if the input keys are already lexicographically sorted. This will make construction
+    /// much faster. If this is set but the keys are not sorted, the fst creation will error
+    #[clap(long)]
+    sorted: bool,
 
     /// Input file(s) to process (either to search or to use to build the fst). Leave empty or
     /// use "-" to read from stdin
@@ -143,7 +150,7 @@ fn run_build(args: Args) -> Result<()> {
     }
     // currently, just grab the first input item
     let reader = get_input(args.input.first().cloned()).expect("need some input");
-    build::build_fstsed(reader, &args.key.unwrap(), &args.fst)
+    build::build_fstsed(reader, &args.key.unwrap(), &args.fst, args.sorted)
 }
 
 // Generic processing function that we use in all modes to search the given

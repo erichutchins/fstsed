@@ -54,12 +54,21 @@ impl Context for &FstMatch<'_> {
         match field_name {
             "key" => self.key.as_str(),
             "value" => self.value.as_str(),
-            _ => self
-                .jsonvalue
-                .as_ref()
-                .and_then(|jv| jv.get(field_name))
-                .and_then(|v| v.as_str())
-                .unwrap_or(""),
+            _ => {
+                self.jsonvalue
+                    .as_ref()
+                    .and_then(|jv| {
+                        if field_name.starts_with('/') {
+                            // Field name starts with "/", use JSON pointer
+                            jv.pointer(field_name)
+                        } else {
+                            // Just regular field retrieval
+                            jv.get(field_name)
+                        }
+                    })
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+            }
         }
     }
 }
