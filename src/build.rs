@@ -80,7 +80,7 @@ where
     eprintln!("Assembling the fst...");
     // insert into set builder
     vals.iter().for_each(|line| {
-        set.insert(line).expect("could not update fstsed database");
+        set.insert(line).expect("error building fstsed database");
     });
 
     // close the fst
