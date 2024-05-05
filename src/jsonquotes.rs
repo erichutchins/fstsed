@@ -1,4 +1,4 @@
-use itermore::prelude::*;
+use itermore::IterArrayChunks;
 use memchr::memchr2_iter;
 use memchr::Memchr2;
 
@@ -71,8 +71,6 @@ pub fn jsonquotes_range_iter<'a>(
         // the indices come to us in a flat series and we just iterate in chunks of
         // two giving us each start, stop index. We add 1 so when this tuple is used to
         // retrieve the str, both open and close quotes are themselves included
-        JsonQuotes::new(haystack)
-            .array_chunks::<2>()
-            .map(move |[a, b]| (a, b + 1)),
+        IterArrayChunks::array_chunks::<2>(JsonQuotes::new(haystack)).map(move |[a, b]| (a, b + 1)),
     )
 }

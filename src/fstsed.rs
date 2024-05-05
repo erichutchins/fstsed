@@ -1,6 +1,6 @@
 use anyhow::{Error, Result};
 use camino::Utf8PathBuf;
-use fst::raw::{Fst, Output};
+use fst::raw::Fst;
 use lazy_static::lazy_static;
 use memmap2::Mmap;
 use microtemplate::{render, Context};
@@ -53,12 +53,21 @@ impl Context for &FstMatch<'_> {
         match field_name {
             "key" => self.key.as_str(),
             "value" => self.value.as_str(),
-            _ => self
-                .jsonvalue
-                .as_ref()
-                .and_then(|jv| jv.get(field_name))
-                .and_then(|v| v.as_str())
-                .unwrap_or(""),
+            _ => {
+                self.jsonvalue
+                    .as_ref()
+                    .and_then(|jv| {
+                        if field_name.starts_with('/') {
+                            // Field name starts with "/", use JSON pointer
+                            jv.pointer(field_name)
+                        } else {
+                            // Just regular field retrieval
+                            jv.get(field_name)
+                        }
+                    })
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+            }
         }
     }
 }
@@ -157,7 +166,7 @@ unsafe fn mmap_fst(path: Utf8PathBuf) -> Result<Fst<Mmap>, Error> {
 }
 
 /// Helper function to determine if user-specified template string will require
-/// json deserialization. Returns true if the template contains and {var} beyond
+/// json deserialization. Returns true if the template contains a {var} beyond
 /// {key} and [value}
 fn test_for_json_keys(template: &str) -> bool {
     template
@@ -191,19 +200,23 @@ impl<'a> FstSed {
 
     #[inline]
     pub fn get_match(&self) -> FstMatch {
+        // Decompress the value
+        let decompressed_value = zstd::stream::decode_all(self.valuecache.borrow().as_slice())
+            .unwrap_or("<decompressionerror>".as_bytes().to_vec());
+
         // instantiate object directly. i tried using a new constructor, but had lifetime/scoping
         // issues passing references created in this function
         FstMatch {
             key: std::str::from_utf8(self.keycache.borrow().as_slice())
                 .unwrap_or("<keyerror>")
                 .to_string(),
-            value: std::str::from_utf8(self.valuecache.borrow().as_slice())
+            value: std::str::from_utf8(&decompressed_value)
                 .unwrap_or("<valueerror>")
                 .to_string(),
             template: &self.template,
             jsonvalue: if self.has_json_keys {
                 Some(
-                    serde_json::from_slice(self.valuecache.borrow().as_slice())
+                    serde_json::from_slice(&decompressed_value)
                         .unwrap_or_else(|_| Value::default()),
                 )
             } else {
@@ -238,7 +251,6 @@ impl<'a> FstSed {
     #[inline]
     pub fn longest_match_at(&self, text: &'a [u8], start: usize) -> Option<usize> {
         let mut node = self.fst.root();
-        let mut out = Output::zero();
         let mut last_match = None;
         let value = &text[start..];
 
@@ -246,13 +258,22 @@ impl<'a> FstSed {
             if let Some(trans_index) = node.find_input(b) {
                 let t = node.transition(trans_index);
                 node = self.fst.node(t.addr);
-                out = out.cat(t.out);
 
                 if let Some(sentinel_index) = node.find_input(SENTINEL) {
                     // validate candidate match has nonword boundary char next
                     // or is at the end of the line. we dont want matches inside other strings,
                     // foo should not match inside foobar
                     if i == value.len() - 1 || RE_UNICODE_BOUNDARY.is_match(&value[i + 1..]) {
+                        // we have a match!
+                        self.clear();
+                        last_match = Some(i + 1);
+                        self.keycache
+                            .borrow_mut()
+                            .extend_from_slice(&value[..i + 1]);
+                        *self.startcache.borrow_mut() = start;
+
+                        // find the sentinel node, then read to the the final node
+                        // to retrieve the "value"
                         let sentinel = node.transition(sentinel_index);
                         let mut snode = self.fst.node(sentinel.addr);
                         while !snode.is_final() {
@@ -266,14 +287,6 @@ impl<'a> FstSed {
                                 break;
                             }
                         }
-
-                        // clear and update all the caches
-                        self.clear();
-                        last_match = Some(i + 1);
-                        self.keycache
-                            .borrow_mut()
-                            .extend_from_slice(&value[..i + 1]);
-                        *self.startcache.borrow_mut() = start;
                     }
                 }
             } else {

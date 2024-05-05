@@ -12,6 +12,8 @@ Like [geoipsed](https://github.com/erichutchins/geoipsed) this tool enables in-l
 - JSON search mode to limit searches just within json strings
 - Deserialize json strings to search decoded/unescaped strings
 - Flexible templating to customize decorations
+- [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901) support both for building and templating
+- Zstd compression of input data to minimize size of fst on disk
 
 ## Use Cases
 
@@ -54,16 +56,19 @@ Find and replace/decorate text at scale using finite state transducers (fst)
 
 Usage: fstsed [OPTIONS] -f <FST> [FILE]...
 
+Usage: fstsed [OPTIONS] -f <FST> [FILE]...
+
 Arguments:
   [FILE]...  Input file(s) to process (either to search or to use to build the fst). Leave empty or use "-" to read from stdin
 
 Options:
   -o, --only-matching        Show only nonempty parts of lines that match
   -C, --color <COLOR>        Use markers to highlight the matching strings [default: auto] [possible values: always, never, auto]
-  -f <FST>                   Specify fst db to use in search or build modes
+  -f <FST>                   Specify fst db to use in search or to create in build mode
       --build                Build mode. Build a fst from json data instead of querying one. Specify output path with the -f --fst parameter. Only first file input parameter or stdin is used to make the fst
-  -k, --key <KEY>            When building a fst, extract the given json field to use as the key in the fst database [default: key]
-  -t, --template <TEMPLATE>  Specify the format of the fstsed match decoration. Field names are enclosed in {}, for example "{field1} any fixed string {field2} & {field3}"
+  -k, --key <KEY>            When building a fst, extract the given json field to use as the key in the fst database. Key may also be provided as a jsonpointer, e.g. /obj/array/1/item [default: key]
+      --sorted               When building a fst, set this if the keys of input json are already lexicographically sorted. This will make build construction much faster. If this is set but the keys are not sorted, the fst creation will error
+  -t, --template <TEMPLATE>  Specify the format of the fstsed match decoration. Field names are enclosed in {}, for example "{field1} any fixed string {field2} & {field3}". Fields may be json keys or jsonpointers {/obj/array/1/item}
   -j, --json                 Json search mode. Fstsed will treat input as json, searching only inside quoted json strings. All strings are deserialized/decoded before json before searching, and all template decorations are properly json-encoded in the output for subsequent processing
   -h, --help                 Print help
   -V, --version              Print version
@@ -98,20 +103,10 @@ In [6]: with open("volexity.json", "w") as f:
 
 2. **Build FST database**
 
-2.1. **Build using fstsed**
-
 ```
 fstsed --build -f volexity.fst -k value volexity.json
 # or pipe in from stdin
 cat volexity.json | fstsed --build -f volexity.fst -k value 
-```
-
-2.2. **Build using fst bin itself**
-
-To build it manually, first know that way we encode the database is to join key and value with a null byte. That's the only difference between a fstsed fst and a fst fst. The jq function extracts the `.value` of the indicator, prints a null `\u0000`, and then prints the whole record back out as json. Then the fst bin utility does the work of making the transducer itself.
-
-```
-cat volexity.json | jq -r '.value + "\u0000" + tojson' | fst set - volexity.fst
 ```
 
 3. **Now we can play**

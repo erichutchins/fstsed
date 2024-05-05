@@ -55,7 +55,7 @@ struct Args {
     #[clap(short = 'C', long, value_enum, default_value_t = ArgsColorChoice::Auto)]
     color: ArgsColorChoice,
 
-    /// Specify fst db to use in search or build modes
+    /// Specify fst db to use in search or to create in build mode
     #[clap(short = 'f', value_name = "FST", value_hint = clap::ValueHint::FilePath)]
     fst: Utf8PathBuf,
 
@@ -65,12 +65,20 @@ struct Args {
     #[clap(long)]
     build: bool,
 
-    /// When building a fst, extract the given json field to use as the key in the fst database
+    /// When building a fst, extract the given json field to use as the key in the fst database.
+    /// Key may also be provided as a jsonpointer, e.g. /obj/array/1/item
     #[clap(short = 'k', long, value_name = "KEY", default_value = "key")]
     key: Option<String>,
 
+    /// When building a fst, set this if the keys of input json are already lexicographically sorted.
+    /// This will make build construction much faster. If this is set but the keys are not sorted,
+    /// the fst creation will error
+    #[clap(long)]
+    sorted: bool,
+
     /// Specify the format of the fstsed match decoration. Field names are enclosed in {},
-    /// for example "{field1} any fixed string {field2} & {field3}"
+    /// for example "{field1} any fixed string {field2} & {field3}". Fields may be json keys
+    /// or jsonpointers {/obj/array/1/item}
     #[clap(short, long)]
     template: Option<String>,
 
@@ -143,7 +151,7 @@ fn run_build(args: Args) -> Result<()> {
     }
     // currently, just grab the first input item
     let reader = get_input(args.input.first().cloned()).expect("need some input");
-    build::build_fstsed(reader, &args.key.unwrap(), &args.fst)
+    build::build_fstsed(reader, &args.key.unwrap(), &args.fst, args.sorted)
 }
 
 // Generic processing function that we use in all modes to search the given
@@ -226,7 +234,8 @@ fn runjson(args: Args, _: ColorChoice) -> Result<(), Error> {
             for (start, end) in jsonquotes_range_iter(line) {
                 // print from last spot to new start
                 out.write_all(&line[lastpos..start])?;
-                // deserialize string and process result
+                // deserialize string and process result (which is a quoted string
+                // and therefore a valid json object)
                 // note: we are allocating a new string every time
                 match serde_json::from_slice::<String>(&line[start..end]) {
                     Ok(s) => {
