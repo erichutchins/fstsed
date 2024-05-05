@@ -10,7 +10,6 @@ use std::cell::RefCell;
 use std::fs::File;
 use std::iter::Peekable;
 use termcolor::ColorChoice;
-use zstd::stream::decode_all;
 
 const SENTINEL: u8 = 0;
 
@@ -202,7 +201,7 @@ impl<'a> FstSed {
     #[inline]
     pub fn get_match(&self) -> FstMatch {
         // Decompress the value
-        let decompressed_value = decode_all(self.valuecache.borrow().as_slice())
+        let decompressed_value = zstd::stream::decode_all(self.valuecache.borrow().as_slice())
             .unwrap_or("<decompressionerror>".as_bytes().to_vec());
 
         // instantiate object directly. i tried using a new constructor, but had lifetime/scoping

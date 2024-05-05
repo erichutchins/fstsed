@@ -6,7 +6,6 @@ use serde_json::Value;
 use std::fs::File;
 use std::io;
 use std::str;
-use zstd::stream::copy_encode;
 
 const SENTINEL: u8 = 0;
 
@@ -50,7 +49,7 @@ where
             tuple.push(SENTINEL);
 
             // zstd compress the line and write directly into output tuple
-            if copy_encode(line, &mut tuple, 3).is_err() {
+            if zstd::stream::copy_encode(line, &mut tuple, 3).is_err() {
                 num_errors += 1;
             } else {
                 // push the assembled tuple to our vector of vectors
