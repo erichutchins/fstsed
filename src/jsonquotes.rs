@@ -22,7 +22,7 @@ impl<'a> JsonQuotes<'a> {
     }
 }
 
-impl<'a> Iterator for JsonQuotes<'a> {
+impl Iterator for JsonQuotes<'_> {
     type Item = usize;
 
     #[inline]

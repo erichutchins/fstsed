@@ -42,7 +42,7 @@ pub struct FstMatch<'f> {
     jsonvalue: Option<Value>,
 }
 
-impl<'f> FstMatch<'f> {
+impl FstMatch<'_> {
     pub fn render(&self) -> String {
         render(self.template, self)
     }
@@ -101,7 +101,7 @@ impl<'f, 'a> FstMatches<'f, 'a> {
 // ideally this iterator would return a custom Match object with the true start offset of the text
 // match, plus the text of the match itself, but the constructor is private. Could not
 // overcome lifetime issues with returning a FstMatch directly from this.
-impl<'f, 'a> Iterator for FstMatches<'f, 'a> {
+impl Iterator for FstMatches<'_, '_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<usize> {
