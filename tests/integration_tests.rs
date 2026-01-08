@@ -1,7 +1,7 @@
-use std::process::Command;
+use camino::Utf8PathBuf;
 use std::fs;
 use std::io::Write;
-use camino::Utf8PathBuf;
+use std::process::Command;
 
 fn get_bin() -> String {
     env!("CARGO_BIN_EXE_fstsed").to_string()
@@ -9,7 +9,11 @@ fn get_bin() -> String {
 
 fn create_temp_json(name: &str) -> Utf8PathBuf {
     let dir = std::env::temp_dir();
-    let path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("test_{}_{}.json", name, std::process::id()));
+    let path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!(
+        "test_{}_{}.json",
+        name,
+        std::process::id()
+    ));
     let mut file = fs::File::create(&path).unwrap();
     writeln!(file, r#"{{"key": "apple", "value": "A"}}"#).unwrap();
     writeln!(file, r#"{{"key": "banana", "value": "B"}}"#).unwrap();
@@ -20,7 +24,8 @@ fn create_temp_json(name: &str) -> Utf8PathBuf {
 fn test_cli_build_and_search() {
     let bin = get_bin();
     let dir = std::env::temp_dir();
-    let fst_path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("test_cli_{}.fst", std::process::id()));
+    let fst_path = Utf8PathBuf::from(dir.to_str().unwrap())
+        .join(format!("test_cli_{}.fst", std::process::id()));
     let json_path = create_temp_json("basic");
 
     // 1. Build
@@ -64,7 +69,8 @@ fn test_cli_build_and_search() {
 fn test_cli_template() {
     let bin = get_bin();
     let dir = std::env::temp_dir();
-    let fst_path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("test_tmpl_{}.fst", std::process::id()));
+    let fst_path = Utf8PathBuf::from(dir.to_str().unwrap())
+        .join(format!("test_tmpl_{}.fst", std::process::id()));
     let json_path = create_temp_json("tmpl");
 
     Command::new(&bin)
@@ -105,7 +111,8 @@ fn test_cli_template() {
 fn test_cli_json_mode() {
     let bin = get_bin();
     let dir = std::env::temp_dir();
-    let fst_path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("test_json_{}.fst", std::process::id()));
+    let fst_path = Utf8PathBuf::from(dir.to_str().unwrap())
+        .join(format!("test_json_{}.fst", std::process::id()));
     let json_path = create_temp_json("json");
 
     Command::new(&bin)
@@ -131,7 +138,9 @@ fn test_cli_json_mode() {
     {
         let mut stdin = child.stdin.take().unwrap();
         // search inside a json string
-        stdin.write_all(r#"{"text": "i want an apple"}"#.as_bytes()).unwrap();
+        stdin
+            .write_all(r#"{"text": "i want an apple"}"#.as_bytes())
+            .unwrap();
         stdin.write_all(b"\n").unwrap();
     }
 
@@ -149,7 +158,8 @@ fn test_cli_json_mode() {
 fn test_cli_only_matching() {
     let bin = get_bin();
     let dir = std::env::temp_dir();
-    let fst_path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("test_only_{}.fst", std::process::id()));
+    let fst_path = Utf8PathBuf::from(dir.to_str().unwrap())
+        .join(format!("test_only_{}.fst", std::process::id()));
     let json_path = create_temp_json("only");
 
     Command::new(&bin)

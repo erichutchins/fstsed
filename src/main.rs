@@ -215,45 +215,54 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
     #[inline]
     fn process_json(&mut self, line: &[u8]) -> Result<bool, io::Error> {
         let mut lastpos: usize = 0;
-        for (start, end) in jsonquotes_range_iter(line) {
+        for (start, end, has_esc) in jsonquotes_range_iter(line) {
             // print from last spot to new start
             if !self.only_matching {
                 self.buf.write_all(&line[lastpos..start])?;
             }
 
-            // deserialize string and process result
-            match serde_json::from_slice::<String>(&line[start..end]) {
-                Ok(s) => {
-                    self.temp_buf.clear();
-                    // Process the string content into temp_buf
+            // CONTENT: line[start+1..end-1]
+            let raw_content = &line[start + 1..end - 1];
 
-                    let mut inner_lastpos = 0;
-                    let input_bytes = s.as_bytes();
-                    let mut matcher = self.fsed.find_iter(input_bytes, self.cache);
-                    while let Some(m) = matcher.next() {
-                        self.temp_buf.write_all(&input_bytes[inner_lastpos..m])?;
-                        self.temp_buf
-                            .write_all(matcher.get_match().render().as_bytes())?;
-                        inner_lastpos = m + matcher.get_match_len();
-                    }
-                    self.temp_buf.write_all(&input_bytes[inner_lastpos..])?;
-
-                    serde_json::to_writer(
-                        &mut self.buf,
-                        std::str::from_utf8(&self.temp_buf).unwrap(),
-                    )?;
-                }
-                _ => {
-                    if !self.only_matching {
-                        self.buf.write_all(&line[start..end])?;
+            if !has_esc {
+                // FAST PATH: No escapes to handle!
+                // We can run FST directly on the raw bytes from the line.
+                self.process_content(raw_content)?;
+            } else {
+                // SLOW PATH: Use Cow to avoid allocation if possible,
+                // though has_esc=true means we'll likely allocate once.
+                match serde_json::from_slice::<std::borrow::Cow<str>>(&line[start..end]) {
+                    Ok(s) => self.process_content(s.as_bytes())?,
+                    Err(_) => {
+                        if !self.only_matching {
+                            self.buf.write_all(&line[start..end])?;
+                        }
                     }
                 }
-            };
+            }
             lastpos = end;
         }
         if !self.only_matching {
             self.buf.write_all(&line[lastpos..])?;
         }
         Ok(true)
+    }
+
+    #[inline]
+    fn process_content(&mut self, input: &[u8]) -> Result<(), io::Error> {
+        self.temp_buf.clear();
+        let mut inner_lastpos = 0;
+        let mut matcher = self.fsed.find_iter(input, self.cache);
+
+        while let Some(m) = matcher.next() {
+            self.temp_buf.write_all(&input[inner_lastpos..m])?;
+            self.temp_buf
+                .write_all(matcher.get_match().render().as_bytes())?;
+            inner_lastpos = m + matcher.get_match_len();
+        }
+        self.temp_buf.write_all(&input[inner_lastpos..])?;
+
+        serde_json::to_writer(&mut self.buf, std::str::from_utf8(&self.temp_buf).unwrap())?;
+        Ok(())
     }
 }
