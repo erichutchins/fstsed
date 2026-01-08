@@ -85,3 +85,39 @@ where
     // close the fst
     set.finish().map_err(From::from)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn test_build_fstsed_basic() -> Result<()> {
+        let input_data = r#"{"key": "apple", "value": "A"}
+{"key": "banana", "value": "B"}"#;
+        let reader = Cursor::new(input_data);
+        let dir = std::env::temp_dir();
+        let fst_path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("test_build_{}.fst", std::process::id()));
+
+        build_fstsed(reader, "key", &fst_path, false)?;
+
+        assert!(fst_path.exists());
+        let _ = std::fs::remove_file(fst_path);
+        Ok(())
+    }
+
+    #[test]
+    fn test_build_fstsed_json_pointer() -> Result<()> {
+        let input_data = r#"{"data": {"name": "apple"}, "value": "A"}
+{"data": {"name": "banana"}, "value": "B"}"#;
+        let reader = Cursor::new(input_data);
+        let dir = std::env::temp_dir();
+        let fst_path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("test_build_ptr_{}.fst", std::process::id()));
+
+        build_fstsed(reader, "/data/name", &fst_path, false)?;
+
+        assert!(fst_path.exists());
+        let _ = std::fs::remove_file(fst_path);
+        Ok(())
+    }
+}

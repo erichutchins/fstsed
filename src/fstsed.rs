@@ -22,11 +22,11 @@ lazy_static! {
 lazy_static! {
     static ref RE_NONWORD: Regex = Regex::new(r#"(?m)(?i-u)[, \t\a\n:="]"#).unwrap();
 }
-// RE_UNICODE_BOUNDARY is used within the fstmatch algorithm to validate
-// that the end of the match is a boundary and therefore we are not inside
-// a word
-lazy_static! {
-    static ref RE_UNICODE_BOUNDARY: Regex = Regex::new(r"^\W").unwrap();
+// is_word_char checks if a byte is a word character (per Unicode)
+// This is used to validate match boundaries without a full regex engine call.
+#[inline]
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
 
 /// FstMatch represents a single match of a fst key in a haystack
@@ -105,45 +105,28 @@ impl Iterator for FstMatches<'_, '_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<usize> {
-        let mut m = self.reiter.next();
-
-        // self.skip will be 0 only for the very first iteration. this is because matching at the
-        // beginning of the line is a slightly different operation: we want to test that very first
-        // byte if it is in the fst. for all other iterations, we are looking for word boundaries
-        // and thus want to test if the NEXT byte is in the fst
-        while m.is_some()
-            && self
-                .fstsed
-                .longest_match_at(self.haystack, m.unwrap().start() + self.skip)
-                .is_none()
-        {
-            // advance loop until we find a fstsed match or exhaust the iterator
-            m = self.reiter.next();
-            // avoid branching of testing "is this the first loop" and just set
-            // to 1 over and over again.
+        while let Some(m) = self.reiter.next() {
+            // self.skip will be 0 only for the very first iteration (RE_START match at pos 0).
+            // for all other iterations, we are looking for word boundaries from RE_NONWORD
+            // and thus want to test if the NEXT byte is in the fst.
+            let start_pos = m.start() + self.skip;
+            // avoid branching but ensure skip is 1 for all subsequent iterations
             self.skip = 1;
-        }
 
-        // we have two circumstances here: we've run out of reiter match positions
-        // or we have a real match. for the former, we are done: return None and break
-        // our iterator. (Clippy thinks this should just be m? but that seems really
-        // hard to comprehend what's happening)
-        #[allow(clippy::question_mark)]
-        if m.is_none() {
-            return None;
-        }
+            if self.fstsed.longest_match_at(self.haystack, start_pos).is_some() {
+                let match_start = self.fstsed.get_match_start();
+                let match_end = match_start + self.fstsed.get_match_len();
 
-        // when we have a match, we must advance the reiter position
-        // past the point of the last match length before we can resume searching
-        while self.reiter.peek().is_some()
-            && (self.reiter.peek().unwrap().start())
-                <= (self.fstsed.get_match_start() + self.fstsed.get_match_len())
-        {
-            self.reiter.next();
-        }
+                // when we have a match, we must advance the reiter position
+                // past the point of the last match length before we can resume searching
+                while self.reiter.peek().is_some() && self.reiter.peek().unwrap().start() < match_end {
+                    self.reiter.next();
+                }
 
-        // return just position of the match start
-        Some(self.fstsed.get_match_start())
+                return Some(match_start);
+            }
+        }
+        None
     }
 }
 
@@ -199,7 +182,7 @@ impl<'a> FstSed {
     }
 
     #[inline]
-    pub fn get_match(&self) -> FstMatch {
+    pub fn get_match(&self) -> FstMatch<'_> {
         // Decompress the value
         let decompressed_value = zstd::stream::decode_all(self.valuecache.borrow().as_slice())
             .unwrap_or("<decompressionerror>".as_bytes().to_vec());
@@ -263,7 +246,19 @@ impl<'a> FstSed {
                     // validate candidate match has nonword boundary char next
                     // or is at the end of the line. we dont want matches inside other strings,
                     // foo should not match inside foobar
-                    if i == value.len() - 1 || RE_UNICODE_BOUNDARY.is_match(&value[i + 1..]) {
+                    let is_boundary = if i == value.len() - 1 {
+                        true
+                    } else {
+                        // use bstr to decode the next character and check if it's a word char
+                        use bstr::ByteSlice;
+                        if let Some(next_char) = value[i + 1..].chars().next() {
+                            !is_word_char(next_char)
+                        } else {
+                            true
+                        }
+                    };
+
+                    if is_boundary {
                         // we have a match!
                         self.clear();
                         last_match = Some(i + 1);
@@ -299,5 +294,87 @@ impl<'a> FstSed {
     #[inline]
     pub fn longest_match(&self, text: &'a [u8]) -> Option<usize> {
         self.longest_match_at(text, 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_word_char() {
+        assert!(is_word_char('a'));
+        assert!(is_word_char('Z'));
+        assert!(is_word_char('0'));
+        assert!(is_word_char('_'));
+        assert!(is_word_char('é'));
+        assert!(is_word_char('京'));
+        assert!(!is_word_char(' '));
+        assert!(!is_word_char('!'));
+        assert!(!is_word_char('.'));
+    }
+
+    #[test]
+    fn test_json_keys_check() {
+        assert!(!test_for_json_keys("<{key}|{value}>"));
+        assert!(test_for_json_keys("<{key}|{value}|{other}>"));
+        assert!(test_for_json_keys("{/path/to/json}"));
+        assert!(!test_for_json_keys("pure text"));
+    }
+
+    fn create_test_fst(name: &str, pairs: &[(&str, &str)]) -> Utf8PathBuf {
+        let dir = std::env::temp_dir();
+        let path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("test_fstsed_{}_{}.fst", name, std::process::id()));
+        {
+            let wtr = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
+            let mut build = fst::SetBuilder::new(wtr).unwrap();
+
+            let mut data: Vec<Vec<u8>> = pairs
+                .iter()
+                .map(|(k, v)| {
+                    let mut row = k.as_bytes().to_vec();
+                    row.push(SENTINEL);
+                    row.extend_from_slice(zstd::stream::encode_all(v.as_bytes(), 3).unwrap().as_slice());
+                    row
+                })
+                .collect();
+            data.sort();
+            for row in data {
+                build.insert(row).unwrap();
+            }
+            build.finish().unwrap();
+        }
+        path
+    }
+
+    #[test]
+    fn test_fstsed_search() {
+        let fst_path = create_test_fst("search", &[("foo", "bar"), ("baz", "qux"), ("京", "tokyo")]);
+        let fsed = FstSed::new(fst_path.clone(), None, ColorChoice::Never);
+
+        let haystack = "foo baz foobar 京 text".as_bytes();
+        let matches: Vec<usize> = fsed.find_iter(haystack).collect();
+
+        // Should match "foo" at 0, "baz" at 4, and "京" at 15
+        // "foobar" should NOT match "foo" because of word boundary
+        assert_eq!(matches, vec![0, 4, 15]);
+
+        let _ = std::fs::remove_file(fst_path);
+    }
+
+    #[test]
+    fn test_fstsed_overlap_and_none() {
+        let fst_path = create_test_fst("overlap", &[("apple", "A"), ("apple pie", "B")]);
+        let fsed = FstSed::new(fst_path.clone(), None, ColorChoice::Never);
+
+        let haystack = "apple apple pie applepie".as_bytes();
+        let matches: Vec<usize> = fsed.find_iter(haystack).collect();
+
+        // "apple" at 0 matches.
+        // "apple pie" at 6 matches (longest match).
+        // "applepie" at 16 does NOT match because of word boundary at the end.
+        assert_eq!(matches, vec![0, 6]);
+
+        let _ = std::fs::remove_file(fst_path);
     }
 }
