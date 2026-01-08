@@ -12,20 +12,18 @@ use std::sync::LazyLock;
 use termcolor::ColorChoice;
 
 const SENTINEL: u8 = 0;
+use bstr::ByteSlice;
 
 // RE_START and RE_NONWORD are used to find candidate positions
-// to evaluate for fst keyword matches
-// Note how these disable unicode matching (?i-u). key perf improvement
+// to evaluate for fst keyword matches. 
+// Note how these disable unicode matching (?i-u). This is a key 
+// performance improvement as it avoids the expensive unicode 
+// DFA construction and scanning for word boundaries.
 static RE_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i-u)^").unwrap());
 static RE_NONWORD: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?m)(?i-u)[, \t\a\n:="]"#).unwrap());
+    LazyLock::new(|| Regex::new(r#"(?m)(?i-u)[^a-zA-Z0-9_]"#).unwrap());
 
-// is_word_char checks if a byte is a word character (per Unicode)
-// This is used to validate match boundaries without a full regex engine call.
-#[inline]
-fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
-}
+use crate::is_word_char;
 
 /// FstMatch represents a single match of a fst key in a haystack
 /// with its corresponding value from the fst.
@@ -74,7 +72,6 @@ pub struct FstMatches<'f, 'c, 'a> {
     // chain the two regexes iters together to ensure we can search for matches at the beginning of
     // a line as well as when word boundaries occur at beginning of line. both might match at pos
     // 0, but operate in different modes
-    // TODO: would be better to use a Generic here...
     reiter:
         Peekable<std::iter::Chain<regex::bytes::Matches<'f, 'a>, regex::bytes::Matches<'f, 'a>>>,
 }
@@ -118,23 +115,43 @@ impl<'f, 'c, 'a> FstMatches<'f, 'c, 'a> {
     }
 }
 
-// ideally this iterator would return a custom Match object with the true start offset of the text
-// match, plus the text of the match itself, but the constructor is private. Could not
-// overcome lifetime issues with returning a FstMatch directly from this.
-// ideally this iterator would return a custom Match object with the true start offset of the text
-// match, plus the text of the match itself, but the constructor is private. Could not
-// overcome lifetime issues with returning a FstMatch directly from this.
 impl Iterator for FstMatches<'_, '_, '_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<usize> {
         while let Some(m) = self.reiter.next() {
-            // self.skip will be 0 only for the very first iteration (RE_START match at pos 0).
-            // for all other iterations, we are looking for word boundaries from RE_NONWORD
-            // and thus want to test if the NEXT byte is in the fst.
             let start_pos = m.start() + self.skip;
-            // avoid branching but ensure skip is 1 for all subsequent iterations
             self.skip = 1;
+
+            if start_pos >= self.haystack.len() {
+                continue;
+            }
+
+            // Boundary validation: if key starts with a word char, preceding char must not be a word char.
+            // This prevents partial matches inside other words (e.g. matching 'apple' in 'pineapple'),
+            // but correctly allows matches after non-word characters like '.' or '-' for DFIR indicators.
+            if start_pos > 0 {
+                let curr_byte = self.haystack[start_pos];
+                let is_start_word = if curr_byte < 128 {
+                    is_word_char(curr_byte as char)
+                } else {
+                    self.haystack[start_pos..].chars().next().map_or(false, is_word_char)
+                };
+
+                if is_start_word {
+                    let prev_byte = self.haystack[start_pos - 1];
+                    let is_prev_word = if prev_byte < 128 {
+                        is_word_char(prev_byte as char)
+                    } else {
+                        self.haystack[..start_pos].chars().rev().next().map_or(false, is_word_char)
+                    };
+
+                    if is_prev_word {
+                        // Not a valid starting boundary
+                        continue;
+                    }
+                }
+            }
 
             if self
                 .fstsed
@@ -247,7 +264,7 @@ impl<'a> FstSed {
         cache: &mut FstCache,
     ) -> Option<usize> {
         let mut node = self.fst.root();
-        let mut last_match = None;
+        let mut last_match_info = None;
         let value = &text[start..];
 
         for (i, &b) in value.iter().enumerate() {
@@ -256,51 +273,72 @@ impl<'a> FstSed {
                 node = self.fst.node(t.addr);
 
                 if let Some(sentinel_index) = node.find_input(SENTINEL) {
-                    // validate candidate match has nonword boundary char next
-                    // or is at the end of the line. we dont want matches inside other strings,
-                    // foo should not match inside foobar
+                    // validation: if key ends with a word char, next char must not be a word char.
+                    // Like the leading boundary check, this ensures we don't match 'apple' 
+                    // inside 'applesauce'.
                     let is_boundary = if i == value.len() - 1 {
                         true
                     } else {
-                        // use bstr to decode the next character and check if it's a word char
-                        use bstr::ByteSlice;
-                        if let Some(next_char) = value[i + 1..].chars().next() {
-                            !is_word_char(next_char)
+                        let next_byte = value[i + 1];
+                        if b < 128 && next_byte < 128 {
+                             // ASCII fast path: used to check trailing word character boundaries
+                             // without a full UTF-8 decode.
+                             if is_word_char(b as char) {
+                                 !is_word_char(next_byte as char)
+                             } else {
+                                 true
+                             }
                         } else {
-                            true
+                             // Unicode Fallback
+                             if let Some(next_char) = value[i + 1..].chars().next() {
+                                // check last character of the current match
+                                if let Some(last_char) = value[..i+1].chars().rev().next() {
+                                    if is_word_char(last_char) {
+                                        !is_word_char(next_char)
+                                    } else {
+                                        true
+                                    }
+                                } else { true }
+                             } else { true }
                         }
                     };
 
                     if is_boundary {
-                        // we have a match!
-                        cache.key.clear();
-                        cache.value.clear();
-                        last_match = Some(i + 1);
-                        cache.key.extend_from_slice(&value[..i + 1]);
-                        cache.start = start;
-
-                        // find the sentinel node, then read to the the final node
-                        // to retrieve the "value"
-                        let sentinel = node.transition(sentinel_index);
-                        let mut snode = self.fst.node(sentinel.addr);
-                        while !snode.is_final() {
-                            if let Some(t) = snode.transitions().next() {
-                                // after the sentinel, we should not have any more
-                                // branching in the fst, so we just grab the first transition
-                                cache.value.push(t.inp);
-                                snode = self.fst.node(t.addr);
-                            } else {
-                                // somehow ran out of nodes!
-                                break;
-                            }
-                        }
+                        // Remember this as a potentially longest match. We don't retrieve the 
+                        // value yet to avoid unnecessary work if we find a longer match later.
+                        last_match_info = Some((node, sentinel_index, i));
                     }
                 }
             } else {
-                return last_match;
+                break;
             }
         }
-        last_match
+        
+        if let Some((match_node, sentinel_index, i)) = last_match_info {
+            // We found at least one match, retrieve the one with the longest key.
+            cache.key.clear();
+            cache.value.clear();
+            cache.key.extend_from_slice(&value[..i + 1]);
+            cache.start = start;
+
+            // find the sentinel node, then read to the final node
+            // to retrieve the compressed "value" string.
+            let sentinel = match_node.transition(sentinel_index);
+            let mut snode = self.fst.node(sentinel.addr);
+            while !snode.is_final() {
+                if let Some(t) = snode.transitions().next() {
+                    // after the sentinel, we should not have any more
+                    // branching in the fst, so we just grab the first transition
+                    cache.value.push(t.inp);
+                    snode = self.fst.node(t.addr);
+                } else {
+                    // somehow ran out of nodes!
+                    break;
+                }
+            }
+            return Some(i + 1);
+        }
+        None
     }
 
     #[inline]
@@ -377,8 +415,6 @@ mod tests {
         let mut cache = FstCache::new();
         let matches: Vec<usize> = fsed.find_iter(haystack, &mut cache).collect();
 
-        // Should match "foo" at 0, "baz" at 4, and "京" at 15
-        // "foobar" should NOT match "foo" because of word boundary
         assert_eq!(matches, vec![0, 4, 15]);
 
         let _ = std::fs::remove_file(fst_path);
@@ -393,12 +429,6 @@ mod tests {
         let mut cache = FstCache::new();
         let matches: Vec<usize> = fsed.find_iter(haystack, &mut cache).collect();
 
-        // "apple" at 0 matches.
-        // "apple pie" at 6 matches (longest match).
-        // "applepie" at 16 does NOT match because of word boundary at the end.
-        // "apple" at 0 matches.
-        // "apple pie" at 6 matches (longest match).
-        // "applepie" at 16 does NOT match because of word boundary at the end.
         assert_eq!(matches, vec![0, 6]);
 
         let _ = std::fs::remove_file(fst_path);

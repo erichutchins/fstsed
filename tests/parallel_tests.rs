@@ -182,11 +182,11 @@ fn test_cli_flags_ignore_and_hidden() {
     assert!(stdout.contains("IGNORED"));
     assert!(!stdout.contains("HIDDEN"));
 
-    // 3. Hidden run (-.): Should find visible and hidden
+    // 3. Hidden run (--hidden): Should find visible and hidden
     let output = Command::new(&bin)
         .arg("-f")
         .arg(&fst_path)
-        .arg("-.") // --hidden
+        .arg("--hidden")
         .arg(&root_dir)
         .output()
         .expect("run failed");

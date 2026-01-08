@@ -8,8 +8,8 @@ Like [geoipsed](https://github.com/erichutchins/geoipsed) this tool enables in-l
 
 ## Features
 - Search for millions of strings simultaneously with O(1) scaling
-- Parallel search support (recursive directory walking, respects `.gitignore`)
 - Enrich, decorate, or replace search term with data of your choosing
+- Parallel search support (recursive directory walking, respects `.gitignore`)
 - JSON search mode to limit searches just within json strings
 - High-performance JSON processing: stays at ~200MB/s even with 100k+ keys
 - Flexible templating to customize decorations
@@ -78,7 +78,7 @@ Options:
                              properly json-encoded in the output for subsequent processing
   -w, --threads <NUM>        The number of threads to use for searching
   -u, --no-ignore            Do not respect ignore files (.gitignore, .ignore, etc.)
-  -., --hidden               Search hidden files and directories
+      --hidden               Search hidden files and directories
   -h, --help                 Print help
   -V, --version              Print version
 
@@ -168,7 +168,7 @@ The JSON search mode is specifically optimized to avoid deserialization overhead
 ; cat burmese.json
 {"key":"ဗိုလခုပမူးကီး","translated":"Senior General of Myanmar Army"}
 
-; cat burmese.json fstsed -f myanmar.fst --build -k key
+; cat burmese.json | fstsed -f myanmar.fst --build -k key
 ```
 
 Then, taking the lede from [BBC article](https://www.bbc.com/burmese/burma-57432310) as a test case:

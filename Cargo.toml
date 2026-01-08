@@ -36,6 +36,7 @@ grep-regex = "0.1.14"
 ignore = "0.4.25"
 itermore = { version = "0.7.1", default-features = false, features = [
     "array_chunks",
+    "array_windows",
 ] }
 memchr = "2.7.6"
 memmap2 = "0.9.9"
