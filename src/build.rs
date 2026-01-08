@@ -97,7 +97,8 @@ mod tests {
 {"key": "banana", "value": "B"}"#;
         let reader = Cursor::new(input_data);
         let dir = std::env::temp_dir();
-        let fst_path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("test_build_{}.fst", std::process::id()));
+        let fst_path = Utf8PathBuf::from(dir.to_str().unwrap())
+            .join(format!("test_build_{}.fst", std::process::id()));
 
         build_fstsed(reader, "key", &fst_path, false)?;
 
@@ -112,7 +113,8 @@ mod tests {
 {"data": {"name": "banana"}, "value": "B"}"#;
         let reader = Cursor::new(input_data);
         let dir = std::env::temp_dir();
-        let fst_path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("test_build_ptr_{}.fst", std::process::id()));
+        let fst_path = Utf8PathBuf::from(dir.to_str().unwrap())
+            .join(format!("test_build_ptr_{}.fst", std::process::id()));
 
         build_fstsed(reader, "/data/name", &fst_path, false)?;
 

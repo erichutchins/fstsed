@@ -1,14 +1,14 @@
 use anyhow::{Error, Result};
 use camino::Utf8PathBuf;
 use fst::raw::Fst;
-use lazy_static::lazy_static;
 use memmap2::Mmap;
 use microtemplate::{render, Context};
 use regex::bytes::Regex;
 use serde_json::Value;
-use std::cell::RefCell;
+use std::borrow::Cow;
 use std::fs::File;
 use std::iter::Peekable;
+use std::sync::LazyLock;
 use termcolor::ColorChoice;
 
 const SENTINEL: u8 = 0;
@@ -16,12 +16,10 @@ const SENTINEL: u8 = 0;
 // RE_START and RE_NONWORD are used to find candidate positions
 // to evaluate for fst keyword matches
 // Note how these disable unicode matching (?i-u). key perf improvement
-lazy_static! {
-    static ref RE_START: Regex = Regex::new(r"(?i-u)^").unwrap();
-}
-lazy_static! {
-    static ref RE_NONWORD: Regex = Regex::new(r#"(?m)(?i-u)[, \t\a\n:="]"#).unwrap();
-}
+static RE_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i-u)^").unwrap());
+static RE_NONWORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?m)(?i-u)[, \t\a\n:="]"#).unwrap());
+
 // is_word_char checks if a byte is a word character (per Unicode)
 // This is used to validate match boundaries without a full regex engine call.
 #[inline]
@@ -31,14 +29,10 @@ fn is_word_char(c: char) -> bool {
 
 /// FstMatch represents a single match of a fst key in a haystack
 /// with its corresponding value from the fst.
-///
-/// The lifetime parameter `'a` refers to the lifetime of the haystack text.
-/// The lifetime parameter `'f` refers to the lifetime of the fstsed object holding cached matches.
-pub struct FstMatch<'f> {
-    //start: usize,
-    key: String,
-    value: String,
-    template: &'f str,
+pub struct FstMatch<'a> {
+    key: Cow<'a, str>,
+    value: Cow<'a, str>,
+    template: &'a str,
     jsonvalue: Option<Value>,
 }
 
@@ -51,8 +45,8 @@ impl FstMatch<'_> {
 impl Context for &FstMatch<'_> {
     fn get_field(&self, field_name: &str) -> &str {
         match field_name {
-            "key" => self.key.as_str(),
-            "value" => self.value.as_str(),
+            "key" => self.key.as_ref(),
+            "value" => self.value.as_ref(),
             _ => {
                 self.jsonvalue
                     .as_ref()
@@ -72,9 +66,10 @@ impl Context for &FstMatch<'_> {
     }
 }
 
-pub struct FstMatches<'f, 'a> {
+pub struct FstMatches<'f, 'c, 'a> {
     fstsed: &'f FstSed,
     haystack: &'a [u8],
+    cache: &'c mut FstCache,
     skip: usize,
     // chain the two regexes iters together to ensure we can search for matches at the beginning of
     // a line as well as when word boundaries occur at beginning of line. both might match at pos
@@ -84,11 +79,12 @@ pub struct FstMatches<'f, 'a> {
         Peekable<std::iter::Chain<regex::bytes::Matches<'f, 'a>, regex::bytes::Matches<'f, 'a>>>,
 }
 
-impl<'f, 'a> FstMatches<'f, 'a> {
-    pub fn new(fstsed: &'f FstSed, haystack: &'a [u8]) -> Self {
+impl<'f, 'c, 'a> FstMatches<'f, 'c, 'a> {
+    pub fn new(fstsed: &'f FstSed, haystack: &'a [u8], cache: &'c mut FstCache) -> Self {
         Self {
             fstsed,
             haystack,
+            cache,
             skip: 0,
             reiter: RE_START
                 .find_iter(haystack)
@@ -96,12 +92,39 @@ impl<'f, 'a> FstMatches<'f, 'a> {
                 .peekable(),
         }
     }
+
+    pub fn get_match(&mut self) -> FstMatch<'_> {
+        // Decompress the value into scratch buffer
+        self.cache.scratch.clear();
+        let _ = zstd::stream::copy_decode(self.cache.value.as_slice(), &mut self.cache.scratch);
+
+        FstMatch {
+            key: String::from_utf8_lossy(&self.cache.key),
+            value: String::from_utf8_lossy(&self.cache.scratch),
+            template: &self.fstsed.template,
+            jsonvalue: if self.fstsed.has_json_keys {
+                Some(
+                    serde_json::from_slice(&self.cache.scratch)
+                        .unwrap_or_else(|_| Value::default()),
+                )
+            } else {
+                None
+            },
+        }
+    }
+
+    pub fn get_match_len(&self) -> usize {
+        self.cache.key.len()
+    }
 }
 
 // ideally this iterator would return a custom Match object with the true start offset of the text
 // match, plus the text of the match itself, but the constructor is private. Could not
 // overcome lifetime issues with returning a FstMatch directly from this.
-impl Iterator for FstMatches<'_, '_> {
+// ideally this iterator would return a custom Match object with the true start offset of the text
+// match, plus the text of the match itself, but the constructor is private. Could not
+// overcome lifetime issues with returning a FstMatch directly from this.
+impl Iterator for FstMatches<'_, '_, '_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<usize> {
@@ -113,13 +136,19 @@ impl Iterator for FstMatches<'_, '_> {
             // avoid branching but ensure skip is 1 for all subsequent iterations
             self.skip = 1;
 
-            if self.fstsed.longest_match_at(self.haystack, start_pos).is_some() {
-                let match_start = self.fstsed.get_match_start();
-                let match_end = match_start + self.fstsed.get_match_len();
+            if self
+                .fstsed
+                .longest_match_at(self.haystack, start_pos, self.cache)
+                .is_some()
+            {
+                let match_start = self.cache.start;
+                let match_end = match_start + self.cache.key.len();
 
                 // when we have a match, we must advance the reiter position
                 // past the point of the last match length before we can resume searching
-                while self.reiter.peek().is_some() && self.reiter.peek().unwrap().start() < match_end {
+                while self.reiter.peek().is_some()
+                    && self.reiter.peek().unwrap().start() < match_end
+                {
                     self.reiter.next();
                 }
 
@@ -130,13 +159,35 @@ impl Iterator for FstMatches<'_, '_> {
     }
 }
 
+/// FstCache holds reusable buffers for search operations
+pub struct FstCache {
+    key: Vec<u8>,
+    value: Vec<u8>,
+    scratch: Vec<u8>,
+    start: usize,
+}
+
+impl FstCache {
+    pub fn new() -> Self {
+        Self {
+            key: Vec::with_capacity(256),
+            value: Vec::with_capacity(2048),
+            scratch: Vec::with_capacity(2048),
+            start: 0,
+        }
+    }
+}
+
+impl Default for FstCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct FstSed {
     fst: Fst<Mmap>,
     pub color: ColorChoice,
     pub template: String,
-    keycache: RefCell<Vec<u8>>,
-    valuecache: RefCell<Vec<u8>>,
-    startcache: RefCell<usize>,
     has_json_keys: bool,
 }
 
@@ -174,65 +225,27 @@ impl<'a> FstSed {
             fst,
             color,
             template,
-            keycache: RefCell::new(Vec::with_capacity(256)),
-            valuecache: RefCell::new(Vec::with_capacity(2048)),
-            startcache: RefCell::new(0),
             has_json_keys,
         }
     }
 
     #[inline]
-    pub fn get_match(&self) -> FstMatch<'_> {
-        // Decompress the value
-        let decompressed_value = zstd::stream::decode_all(self.valuecache.borrow().as_slice())
-            .unwrap_or("<decompressionerror>".as_bytes().to_vec());
-
-        // instantiate object directly. i tried using a new constructor, but had lifetime/scoping
-        // issues passing references created in this function
-        FstMatch {
-            key: std::str::from_utf8(self.keycache.borrow().as_slice())
-                .unwrap_or("<keyerror>")
-                .to_string(),
-            value: std::str::from_utf8(&decompressed_value)
-                .unwrap_or("<valueerror>")
-                .to_string(),
-            template: &self.template,
-            jsonvalue: if self.has_json_keys {
-                Some(
-                    serde_json::from_slice(&decompressed_value)
-                        .unwrap_or_else(|_| Value::default()),
-                )
-            } else {
-                None
-            },
-        }
-    }
-
-    #[inline]
-    pub fn get_match_len(&self) -> usize {
-        self.keycache.borrow().len()
-    }
-
-    #[inline]
-    pub fn get_match_start(&self) -> usize {
-        *self.startcache.borrow()
-    }
-
-    #[inline]
-    pub fn find_iter<'f>(&'f self, text: &'a [u8]) -> FstMatches<'f, 'a> {
-        FstMatches::new(self, text)
-    }
-
-    #[inline]
-    pub fn clear(&self) {
-        self.keycache.borrow_mut().clear();
-        self.valuecache.borrow_mut().clear();
-        *self.startcache.borrow_mut() = 0;
+    pub fn find_iter<'f, 'c>(
+        &'f self,
+        text: &'a [u8],
+        cache: &'c mut FstCache,
+    ) -> FstMatches<'f, 'c, 'a> {
+        FstMatches::new(self, text, cache)
     }
 
     // adapted from https://github.com/BurntSushi/fst/pull/104/files
     #[inline]
-    pub fn longest_match_at(&self, text: &'a [u8], start: usize) -> Option<usize> {
+    pub fn longest_match_at(
+        &self,
+        text: &'a [u8],
+        start: usize,
+        cache: &mut FstCache,
+    ) -> Option<usize> {
         let mut node = self.fst.root();
         let mut last_match = None;
         let value = &text[start..];
@@ -260,12 +273,11 @@ impl<'a> FstSed {
 
                     if is_boundary {
                         // we have a match!
-                        self.clear();
+                        cache.key.clear();
+                        cache.value.clear();
                         last_match = Some(i + 1);
-                        self.keycache
-                            .borrow_mut()
-                            .extend_from_slice(&value[..i + 1]);
-                        *self.startcache.borrow_mut() = start;
+                        cache.key.extend_from_slice(&value[..i + 1]);
+                        cache.start = start;
 
                         // find the sentinel node, then read to the the final node
                         // to retrieve the "value"
@@ -275,7 +287,7 @@ impl<'a> FstSed {
                             if let Some(t) = snode.transitions().next() {
                                 // after the sentinel, we should not have any more
                                 // branching in the fst, so we just grab the first transition
-                                self.valuecache.borrow_mut().push(t.inp);
+                                cache.value.push(t.inp);
                                 snode = self.fst.node(t.addr);
                             } else {
                                 // somehow ran out of nodes!
@@ -292,8 +304,8 @@ impl<'a> FstSed {
     }
 
     #[inline]
-    pub fn longest_match(&self, text: &'a [u8]) -> Option<usize> {
-        self.longest_match_at(text, 0)
+    pub fn longest_match(&self, text: &'a [u8], cache: &mut FstCache) -> Option<usize> {
+        self.longest_match_at(text, 0, cache)
     }
 }
 
@@ -324,7 +336,11 @@ mod tests {
 
     fn create_test_fst(name: &str, pairs: &[(&str, &str)]) -> Utf8PathBuf {
         let dir = std::env::temp_dir();
-        let path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("test_fstsed_{}_{}.fst", name, std::process::id()));
+        let path = Utf8PathBuf::from(dir.to_str().unwrap()).join(format!(
+            "test_fstsed_{}_{}.fst",
+            name,
+            std::process::id()
+        ));
         {
             let wtr = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
             let mut build = fst::SetBuilder::new(wtr).unwrap();
@@ -334,7 +350,11 @@ mod tests {
                 .map(|(k, v)| {
                     let mut row = k.as_bytes().to_vec();
                     row.push(SENTINEL);
-                    row.extend_from_slice(zstd::stream::encode_all(v.as_bytes(), 3).unwrap().as_slice());
+                    row.extend_from_slice(
+                        zstd::stream::encode_all(v.as_bytes(), 3)
+                            .unwrap()
+                            .as_slice(),
+                    );
                     row
                 })
                 .collect();
@@ -349,11 +369,13 @@ mod tests {
 
     #[test]
     fn test_fstsed_search() {
-        let fst_path = create_test_fst("search", &[("foo", "bar"), ("baz", "qux"), ("京", "tokyo")]);
+        let fst_path =
+            create_test_fst("search", &[("foo", "bar"), ("baz", "qux"), ("京", "tokyo")]);
         let fsed = FstSed::new(fst_path.clone(), None, ColorChoice::Never);
 
         let haystack = "foo baz foobar 京 text".as_bytes();
-        let matches: Vec<usize> = fsed.find_iter(haystack).collect();
+        let mut cache = FstCache::new();
+        let matches: Vec<usize> = fsed.find_iter(haystack, &mut cache).collect();
 
         // Should match "foo" at 0, "baz" at 4, and "京" at 15
         // "foobar" should NOT match "foo" because of word boundary
@@ -368,8 +390,12 @@ mod tests {
         let fsed = FstSed::new(fst_path.clone(), None, ColorChoice::Never);
 
         let haystack = "apple apple pie applepie".as_bytes();
-        let matches: Vec<usize> = fsed.find_iter(haystack).collect();
+        let mut cache = FstCache::new();
+        let matches: Vec<usize> = fsed.find_iter(haystack, &mut cache).collect();
 
+        // "apple" at 0 matches.
+        // "apple pie" at 6 matches (longest match).
+        // "applepie" at 16 does NOT match because of word boundary at the end.
         // "apple" at 0 matches.
         // "apple pie" at 6 matches (longest match).
         // "applepie" at 16 does NOT match because of word boundary at the end.

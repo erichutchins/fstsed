@@ -1,117 +1,31 @@
-use crate::jsonquotes::jsonquotes_range_iter;
-use anyhow::{bail, Error, Result};
-use bstr::io::BufReadExt;
+use anyhow::{bail, Result};
 use camino::Utf8PathBuf;
-use clap::{Parser, ValueEnum};
-use grep_cli::{self, stdout};
-use std::fs::File;
-use std::io::{self, BufReader, IsTerminal, Write};
+use clap::Parser;
+use fstsed::cli::{Args, ArgsColorChoice};
+use fstsed::fstsed::{FstCache, FstSed};
+use fstsed::jsonquotes::jsonquotes_range_iter;
+use fstsed::BUFFERSIZE;
+use grep_regex::RegexMatcher;
+use grep_searcher::{Searcher, Sink, SinkMatch};
+use ignore::WalkBuilder;
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
-use std::process::exit;
-use termcolor::ColorChoice;
-
-pub mod build;
-pub mod fstsed;
-pub mod jsonquotes;
-
-const BUFFERSIZE: usize = 64 * 1024;
-
-// via https://github.com/sstadick/hck/blob/master/src/main.rs#L90
-/// Check if err is a broken pipe.
-#[inline]
-fn is_broken_pipe(err: &Error) -> bool {
-    if let Some(io_err) = err.root_cause().downcast_ref::<io::Error>() {
-        if io_err.kind() == io::ErrorKind::BrokenPipe {
-            return true;
-        }
-    }
-    false
-}
-
-// via https://github.com/sstadick/crabz/blob/ce0d69efe0628c56b1fb7a1de46798b95eef90aa/src/main.rs#L62
-/// Get a buffered input reader from stdin or a file
-fn get_input(path: Option<Utf8PathBuf>) -> Result<Box<dyn BufReadExt + Send + 'static>> {
-    let reader: Box<dyn BufReadExt + Send + 'static> = match path {
-        Some(path) => {
-            if path.as_os_str() == "-" {
-                Box::new(BufReader::with_capacity(BUFFERSIZE, io::stdin()))
-            } else {
-                Box::new(BufReader::with_capacity(BUFFERSIZE, File::open(path)?))
-            }
-        }
-        None => Box::new(BufReader::with_capacity(BUFFERSIZE, io::stdin())),
-    };
-    Ok(reader)
-}
-
-#[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
-struct Args {
-    /// Show only nonempty parts of lines that match
-    #[clap(short, long)]
-    only_matching: bool,
-
-    /// Use markers to highlight the matching strings
-    #[clap(short = 'C', long, value_enum, default_value_t = ArgsColorChoice::Auto)]
-    color: ArgsColorChoice,
-
-    /// Specify fst db to use in search or to create in build mode
-    #[clap(short = 'f', value_name = "FST", value_hint = clap::ValueHint::FilePath)]
-    fst: Utf8PathBuf,
-
-    /// Build mode. Build a fst from json data instead of querying one. Specify output path with
-    /// the -f --fst parameter. Only first file input parameter or stdin is used to make
-    /// the fst
-    #[clap(long)]
-    build: bool,
-
-    /// When building a fst, extract the given json field to use as the key in the fst database.
-    /// Key may also be provided as a jsonpointer, e.g. /obj/array/1/item
-    #[clap(short = 'k', long, value_name = "KEY", default_value = "key")]
-    key: Option<String>,
-
-    /// When building a fst, set this if the keys of input json are already lexicographically sorted.
-    /// This will make build construction much faster. If this is set but the keys are not sorted,
-    /// the fst creation will error
-    #[clap(long)]
-    sorted: bool,
-
-    /// Specify the format of the fstsed match decoration. Field names are enclosed in {},
-    /// for example "{field1} any fixed string {field2} & {field3}". Fields may be json keys
-    /// or jsonpointers {/obj/array/1/item}
-    #[clap(short, long)]
-    template: Option<String>,
-
-    /// Json search mode. Fstsed will treat input as json, searching only inside quoted json strings.
-    /// All strings are deserialized/decoded before json before searching, and all template
-    /// decorations are properly json-encoded in the output for subsequent processing
-    #[clap(short, long)]
-    json: bool,
-
-    /// Input file(s) to process (either to search or to use to build the fst). Leave empty or
-    /// use "-" to read from stdin
-    #[clap(value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
-    input: Vec<Utf8PathBuf>,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
-enum ArgsColorChoice {
-    Always,
-    Never,
-    Auto,
-}
+use std::sync::Arc;
+use termcolor::{Buffer, BufferWriter, ColorChoice};
 
 fn main() -> Result<()> {
     let mut args = Args::parse();
 
-    // if no files specified, add stdin
+    // if no files specified, default to stdin
     if args.input.is_empty() {
         args.input.push(Utf8PathBuf::from("-"));
     }
 
-    // determine appropriate colormode. auto simply
-    // tests if stdout is a tty (if so, then yes color)
-    // or otherwise don't color if it's to a file or another pipe
+    if args.build {
+        return run_build(args);
+    }
+
+    // determine appropriate colormode
     let colormode = match args.color {
         ArgsColorChoice::Auto => {
             if std::io::stdout().is_terminal() {
@@ -124,139 +38,222 @@ fn main() -> Result<()> {
         ArgsColorChoice::Never => ColorChoice::Never,
     };
 
-    // invoke the command!
-    if let Err(e) = if args.build {
-        run_build(args)
-    } else if args.only_matching {
-        run_onlymatching(args, colormode)
-    } else if args.json {
-        runjson(args, colormode)
+    // Initialize FstSed and wrap in Arc for sharing across threads
+    let fsed = Arc::new(FstSed::new(args.fst, args.template, colormode));
+
+    // For stdout output
+    let writer = Arc::new(BufferWriter::stdout(colormode));
+
+    // Differentiate between stdin and file paths
+    let has_stdin = args.input.iter().any(|p| p == "-");
+
+    if has_stdin {
+        // Single threaded stdin processing
+        let mut buf = writer.buffer();
+        let mut cache = FstCache::new();
+        // Match start of every line
+        let matcher = RegexMatcher::new(r"(?m)^").unwrap();
+
+        let sink = FstSedSink {
+            fsed: &fsed,
+            cache: &mut cache,
+            buf: &mut buf,
+            only_matching: args.only_matching,
+            json: args.json,
+            temp_buf: Vec::with_capacity(BUFFERSIZE),
+        };
+
+        // Search stdin
+        Searcher::new().search_reader(&matcher, io::stdin(), sink)?;
+        writer.print(&buf)?;
     } else {
-        run(args, colormode)
-    } {
-        // safely ignore broken pipes, e.g. head
-        if is_broken_pipe(&e) {
-            exit(0);
+        // Parallel directory walking
+        let mut builder = WalkBuilder::new(&args.input[0]);
+        for input in &args.input[1..] {
+            builder.add(input);
         }
-        return Err(e);
+
+        if let Some(threads) = args.threads {
+            builder.threads(threads);
+        }
+
+        if args.no_ignore {
+            builder
+                .ignore(false)
+                .git_global(false)
+                .git_ignore(false)
+                .git_exclude(false);
+        }
+
+        if args.hidden {
+            builder.hidden(false);
+        }
+
+        builder.build_parallel().run(|| {
+            let fsed = fsed.clone();
+            let writer = writer.clone();
+            let mut buf = writer.buffer();
+            let mut cache = FstCache::new();
+            // Match start of every line
+            let matcher = RegexMatcher::new(r"(?m)^").unwrap();
+
+            Box::new(move |result| {
+                let entry = match result {
+                    Ok(entry) => entry,
+                    Err(err) => {
+                        eprintln!("{}", err);
+                        return ignore::WalkState::Continue;
+                    }
+                };
+
+                if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                    return ignore::WalkState::Continue;
+                }
+
+                let sink = FstSedSink {
+                    fsed: &fsed,
+                    cache: &mut cache,
+                    buf: &mut buf,
+                    only_matching: args.only_matching,
+                    json: args.json,
+                    temp_buf: Vec::with_capacity(BUFFERSIZE),
+                };
+
+                let mut searcher = Searcher::new();
+                if let Err(err) = searcher.search_path(&matcher, entry.path(), sink) {
+                    eprintln!("{}: {}", entry.path().display(), err);
+                }
+
+                // Flush thread-local buffer to stdout (atomically)
+                let _ = writer.print(&buf);
+                buf.clear();
+
+                ignore::WalkState::Continue
+            })
+        });
     }
+
     Ok(())
 }
 
 #[inline]
 fn run_build(args: Args) -> Result<()> {
-    // ensure the fst path does not already exist. don't want to overwrite
+    // ensure the fst path does not already exist
     if Path::new(&args.fst).exists() {
-        bail!("fst path {} already exists. Please specify an alternate path or rename/delete existing fst.", &args.fst);
+        bail!(
+            "fst path {} already exists. Please specify an alternate path or rename/delete existing fst.",
+            &args.fst
+        );
     }
-    // currently, just grab the first input item
-    let reader = get_input(args.input.first().cloned()).expect("need some input");
-    build::build_fstsed(reader, &args.key.unwrap(), &args.fst, args.sorted)
+    // handle stdin vs file for build
+    let input = args.input.first().cloned().unwrap();
+    let reader: Box<dyn bstr::io::BufReadExt> = if input == "-" {
+        Box::new(io::BufReader::with_capacity(BUFFERSIZE, io::stdin()))
+    } else {
+        Box::new(io::BufReader::with_capacity(
+            BUFFERSIZE,
+            std::fs::File::open(input)?,
+        ))
+    };
+
+    fstsed::build::build_fstsed(reader, &args.key.unwrap(), &args.fst, args.sorted)
 }
 
-// Generic processing function that we use in all modes to search the given
-// input wth the given fstsed db and write to the given output
-#[inline]
-fn process_line<W>(input: &[u8], fsed: &fstsed::FstSed, out: &mut W) -> Result<(), Error>
-where
-    W: Write + Send + 'static,
-{
-    let mut _lastpos: usize = 0;
-    // process each line
-    for m in fsed.find_iter(input) {
-        // print gap from last match to current match
-        out.write_all(&input[_lastpos..m])?;
-        // print rendered match
-        out.write_all(fsed.get_match().render().as_bytes())?;
-        // advance the position past our match length
-        _lastpos = m + fsed.get_match_len();
-    }
-    // print remainder
-    out.write_all(&input[_lastpos..])?;
-
-    Ok(())
+/// FstSedSink acts as the bridge between grep-searcher and fstsed.
+/// It receives lines from the searcher, processes them with fstsed,
+/// and writes the result to the provided buffer.
+struct FstSedSink<'a, 'b> {
+    fsed: &'a FstSed,
+    cache: &'b mut FstCache,
+    buf: &'b mut Buffer,
+    only_matching: bool,
+    json: bool,
+    // scratch buffer for JSON string handling
+    temp_buf: Vec<u8>,
 }
 
-// Basic mode
-#[inline]
-fn run(args: Args, colormode: ColorChoice) -> Result<(), Error> {
-    let mut out = stdout(colormode);
-    let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
+impl<'a, 'b> Sink for FstSedSink<'a, 'b> {
+    type Error = io::Error;
 
-    for path in args.input {
-        let mut reader = get_input(Some(path))?;
-        reader.for_byte_line_with_terminator(|line| {
-            // TODO: i cant figure out how to transform the std::io::error into anyhow
-            let _ = process_line(line, &fsed, &mut out);
-            Ok(true)
-        })?;
+    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
+        let line = mat.bytes();
+        if self.json {
+            self.process_json(line)
+        } else {
+            self.process_text(line)
+        }
     }
-    out.flush()?;
-    Ok(())
 }
 
-// Print just the search matches rather than the entire line
-#[inline]
-fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
-    let mut out = stdout(colormode);
-    let fsed = fstsed::FstSed::new(args.fst, args.template, colormode);
+impl<'a, 'b> FstSedSink<'a, 'b> {
+    #[inline]
+    fn process_text(&mut self, input: &[u8]) -> Result<bool, io::Error> {
+        let mut lastpos: usize = 0;
+        let mut matcher = self.fsed.find_iter(input, self.cache);
 
-    for path in args.input {
-        let mut reader = get_input(Some(path))?;
-        reader.for_byte_line_with_terminator(|line| {
-            for _ in fsed.find_iter(line) {
-                // just print rendered match and a new line
-                out.write_all(fsed.get_match().render().as_bytes())?;
-                out.write_all(b"\n")?;
+        while let Some(m) = matcher.next() {
+            if !self.only_matching {
+                self.buf.write_all(&input[lastpos..m])?;
             }
-            Ok(true)
-        })?;
-    }
-    out.flush()?;
-    Ok(())
-}
-
-// Json search mode. Use the jsonquotes utility in this crate to find and deserialize just the
-// json strings in the input. Also ensure all formatted output is properly json encoded.
-#[inline]
-fn runjson(args: Args, _: ColorChoice) -> Result<(), Error> {
-    // cant colorize text inside of json strings
-    let mut out = stdout(ColorChoice::Never);
-    let fsed = fstsed::FstSed::new(args.fst, args.template, ColorChoice::Never);
-
-    // temp buffer for holding processed string before re-serializing
-    let mut buf = Vec::with_capacity(BUFFERSIZE);
-
-    for path in args.input {
-        let mut reader = get_input(Some(path))?;
-        reader.for_byte_line_with_terminator(|line| {
-            let mut lastpos: usize = 0;
-            for (start, end) in jsonquotes_range_iter(line) {
-                // print from last spot to new start
-                out.write_all(&line[lastpos..start])?;
-                // deserialize string and process result (which is a quoted string
-                // and therefore a valid json object)
-                // note: we are allocating a new string every time
-                match serde_json::from_slice::<String>(&line[start..end]) {
-                    Ok(s) => {
-                        buf.clear();
-                        // reuse vec buf to collect the processed line
-                        let _ = process_line(s.as_bytes(), &fsed, &mut buf);
-                        // serialize new json string directly to the output
-                        serde_json::to_writer(&mut out, std::str::from_utf8(&buf).unwrap())?;
-                    }
-                    // if error deserializing, just print the original content and move on
-                    // we're not here to enforce json formats
-                    _ => out.write_all(&line[start..end])?,
-                };
-                // advance position
-                lastpos = end;
+            // print rendered match
+            self.buf
+                .write_all(matcher.get_match().render().as_bytes())?;
+            if self.only_matching {
+                self.buf.write_all(b"\n")?;
             }
+            lastpos = m + matcher.get_match_len();
+        }
+
+        if !self.only_matching {
             // print remainder
-            out.write_all(&line[lastpos..])?;
-            Ok(true)
-        })?;
+            self.buf.write_all(&input[lastpos..])?;
+        }
+
+        Ok(true)
     }
-    out.flush()?;
-    Ok(())
+
+    #[inline]
+    fn process_json(&mut self, line: &[u8]) -> Result<bool, io::Error> {
+        let mut lastpos: usize = 0;
+        for (start, end) in jsonquotes_range_iter(line) {
+            // print from last spot to new start
+            if !self.only_matching {
+                self.buf.write_all(&line[lastpos..start])?;
+            }
+
+            // deserialize string and process result
+            match serde_json::from_slice::<String>(&line[start..end]) {
+                Ok(s) => {
+                    self.temp_buf.clear();
+                    // Process the string content into temp_buf
+
+                    let mut inner_lastpos = 0;
+                    let input_bytes = s.as_bytes();
+                    let mut matcher = self.fsed.find_iter(input_bytes, self.cache);
+                    while let Some(m) = matcher.next() {
+                        self.temp_buf.write_all(&input_bytes[inner_lastpos..m])?;
+                        self.temp_buf
+                            .write_all(matcher.get_match().render().as_bytes())?;
+                        inner_lastpos = m + matcher.get_match_len();
+                    }
+                    self.temp_buf.write_all(&input_bytes[inner_lastpos..])?;
+
+                    serde_json::to_writer(
+                        &mut self.buf,
+                        std::str::from_utf8(&self.temp_buf).unwrap(),
+                    )?;
+                }
+                _ => {
+                    if !self.only_matching {
+                        self.buf.write_all(&line[start..end])?;
+                    }
+                }
+            };
+            lastpos = end;
+        }
+        if !self.only_matching {
+            self.buf.write_all(&line[lastpos..])?;
+        }
+        Ok(true)
+    }
 }
