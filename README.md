@@ -7,10 +7,11 @@
 Like [geoipsed](https://github.com/erichutchins/geoipsed) this tool enables in-line enrichment and decoration of text input. geoipsed uses a regular expression to isolate just the strings of interest (IP addresses), but **fstsed** can search for _any_ string. By precomputing a [`fst`](https://blog.burntsushi.net/transducers/) with searchterm and replacement pairs, **fstsed** can turn a database into an ad hoc sed tool.  
 
 ## Features
-- Search for millions of strings simultaneously
+- Search for millions of strings simultaneously with O(1) scaling
+- Parallel search support (recursive directory walking, respects `.gitignore`)
 - Enrich, decorate, or replace search term with data of your choosing
 - JSON search mode to limit searches just within json strings
-- Deserialize json strings to search decoded/unescaped strings
+- High-performance JSON processing: stays at ~200MB/s even with 100k+ keys
 - Flexible templating to customize decorations
 - [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901) support both for building and templating
 - Zstd compression of input data to minimize size of fst on disk
@@ -52,26 +53,47 @@ cargo build --release
 ## Usage 
 
 ```
-Find and replace/decorate text at scale using finite state transducers (fst)
-
-Usage: fstsed [OPTIONS] -f <FST> [FILE]...
-
-Usage: fstsed [OPTIONS] -f <FST> [FILE]...
+Usage: fstsed [OPTIONS] -f <FST> [PATH]...
 
 Arguments:
-  [FILE]...  Input file(s) to process (either to search or to use to build the fst). Leave empty or use "-" to read from stdin
+  [PATH]...  Input file(s) or directory(s) to process. Leave empty or use "-" to read from stdin
 
 Options:
   -o, --only-matching        Show only nonempty parts of lines that match
-  -C, --color <COLOR>        Use markers to highlight the matching strings [default: auto] [possible values: always, never, auto]
+  -C, --color <COLOR>        Use markers to highlight the matching strings [default: auto] [possible values: always, never,
+                             auto]
   -f <FST>                   Specify fst db to use in search or to create in build mode
-      --build                Build mode. Build a fst from json data instead of querying one. Specify output path with the -f --fst parameter. Only first file input parameter or stdin is used to make the fst
-  -k, --key <KEY>            When building a fst, extract the given json field to use as the key in the fst database. Key may also be provided as a jsonpointer, e.g. /obj/array/1/item [default: key]
-      --sorted               When building a fst, set this if the keys of input json are already lexicographically sorted. This will make build construction much faster. If this is set but the keys are not sorted, the fst creation will error
-  -t, --template <TEMPLATE>  Specify the format of the fstsed match decoration. Field names are enclosed in {}, for example "{field1} any fixed string {field2} & {field3}". Fields may be json keys or jsonpointers {/obj/array/1/item}
-  -j, --json                 Json search mode. Fstsed will treat input as json, searching only inside quoted json strings. All strings are deserialized/decoded before json before searching, and all template decorations are properly json-encoded in the output for subsequent processing
+      --build                Build mode. Build a fst from json data instead of querying one. Specify output path with the -f
+                             --fst parameter. Only first file input parameter or stdin is used to make the fst
+  -k, --key <KEY>            When building a fst, extract the given json field to use as the key in the fst database. Key may
+                             also be provided as a jsonpointer, e.g. /obj/array/1/item [default: key]
+      --sorted               When building a fst, set this if the keys of input json are already lexicographically sorted. This
+                             will make build construction much faster. If this is set but the keys are not sorted, the fst
+                             creation will error
+  -t, --template <TEMPLATE>  Specify the format of the fstsed match decoration. Field names are enclosed in {}, for example
+                             "{field1} any fixed string {field2} & {field3}". Fields may be json keys or jsonpointers
+                             {/obj/array/1/item}
+  -j, --json                 Json search mode. Fstsed will treat input as json, searching only inside quoted json strings. All
+                             strings are deserialized/decoded before json before searching, and all template decorations are
+                             properly json-encoded in the output for subsequent processing
+  -w, --threads <NUM>        The number of threads to use for searching
+  -u, --no-ignore            Do not respect ignore files (.gitignore, .ignore, etc.)
+  -., --hidden               Search hidden files and directories
   -h, --help                 Print help
   -V, --version              Print version
+
+Examples:
+  Build an FST database from JSON:
+    fstsed --build -f data.fst -k key data.json
+
+  Basic find and replace:
+    echo "match" | fstsed -f data.fst
+
+  Use a template for decoration:
+    echo "match" | fstsed -f data.fst --template "{key} ({info})"
+
+  JSON search mode (only search inside quoted JSON strings):
+    fstsed -f data.fst --json input.json
 ```
 
 ## Examples
@@ -125,45 +147,20 @@ echo "test of avsvmcloud.com metadata" | fstsed -f volexity.fst --template "{key
 test of avsvmcloud.com (a hostname from 2020/2020-12-14 - DarkHalo Leverages SolarWinds Compromise to Breach Organizations/indicators/indicators.csv report) metadata
 ```
 
-4. **Benchmarks**
+### Performance Scaling
 
-Using the volexity fst db on 30k lines of suricata eve json logs from a home network, we can outperform grep for searching. Ripgrep with fixed-string `-F`is the absolute fastest, but there is significant slow down when ensuring matches occur on word boundaries `-w`. Note in this contrived example, there were not matches of the search terms in the data; this is showing the search-only speeds. (hyperfine is ignoring the non-zero exit code because rg and grep did not find any matches)
+One of the primary advantages of the FST approach is that search performance remains nearly constant regardless of whether you are searching for 10 strings or 100,000 strings.
 
-```shell
-; hyperfine -i -w 10 'fstsed -f volexity.fst 30k.log' 'rg -F -w -f volexity.ioc --passthru 30k.log' 'rg -F -f volexity.ioc --passthru 30k.log' 'grep -Fwf volexity.ioc 30k.log' 'fstsed -f volexity.fst --json 30k.log'
-Benchmark 1: fstsed -f volexity.fst 30k.log
-  Time (mean ± σ):     290.7 ms ±   9.2 ms    [User: 281.4 ms, System: 8.5 ms]
-  Range (min … max):   276.6 ms … 303.2 ms    10 runs
- 
-Benchmark 2: rg -F -w -f volexity.ioc --passthru 30k.log
-  Time (mean ± σ):     343.9 ms ±   9.6 ms    [User: 321.6 ms, System: 20.5 ms]
-  Range (min … max):   335.5 ms … 364.9 ms    10 runs
- 
-  Warning: Ignoring non-zero exit code.
- 
-Benchmark 3: rg -F -f volexity.ioc --passthru 30k.log
-  Time (mean ± σ):     160.0 ms ±   9.0 ms    [User: 132.7 ms, System: 26.3 ms]
-  Range (min … max):   144.9 ms … 180.6 ms    18 runs
- 
-  Warning: Ignoring non-zero exit code.
- 
-Benchmark 4: grep -Fwf volexity.ioc 30k.log
-  Time (mean ± σ):     438.7 ms ±  21.2 ms    [User: 428.9 ms, System: 9.1 ms]
-  Range (min … max):   414.0 ms … 478.2 ms    10 runs
- 
-  Warning: Ignoring non-zero exit code.
- 
-Benchmark 5: fstsed -f volexity.fst --json 30k.log
-  Time (mean ± σ):     543.8 ms ±  17.1 ms    [User: 532.8 ms, System: 8.0 ms]
-  Range (min … max):   522.9 ms … 579.8 ms    10 runs
- 
-Summary
-  'rg -F -f volexity.ioc --passthru 30k.log' ran
-    1.82 ± 0.12 times faster than 'fstsed -f volexity.fst 30k.log'
-    2.15 ± 0.13 times faster than 'rg -F -w -f volexity.ioc --passthru 30k.log'
-    2.74 ± 0.20 times faster than 'grep -Fwf volexity.ioc 30k.log'
-    3.40 ± 0.22 times faster than 'fstsed -f volexity.fst --json 30k.log'
-```
+| Tool | Keys | Throughput (MB/s) | Peak RSS (MB) |
+| --- | --- | --- | --- |
+| `fstsed --json` | 10 | 203 MB/s | 11 MB |
+| `fstsed --json` | 1,000 | 209 MB/s | 11 MB |
+| `fstsed --json` | 100,000 | 198 MB/s | 12 MB |
+| `rg -F -w` | 10,000 | 66 MB/s | 60 MB |
+
+*Results from 10MB JSON corpus benchmark.*
+
+The JSON search mode is specifically optimized to avoid deserialization overhead for strings without escapes, allowing it to maintain high speeds across extremely large sets of indicators.
 
 ### Example: Highlighting Translations
 

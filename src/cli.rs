@@ -51,7 +51,7 @@ pub struct Args {
     pub sorted: bool,
 
     /// Specify the format of the fstsed match decoration. Field names are enclosed in {},
-    /// for example \"{field1} any fixed string {field2} & {field3}\". Fields may be json keys
+    /// for example "{field1} any fixed string {field2} & {field3}". Fields may be json keys
     /// or jsonpointers {/obj/array/1/item}
     #[clap(short, long)]
     pub template: Option<String>,
@@ -62,9 +62,9 @@ pub struct Args {
     #[clap(short, long)]
     pub json: bool,
 
-    /// Input file(s) to process (either to search or to use to build the fst). Leave empty or
-    /// use \"-\" to read from stdin
-    #[clap(value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+    /// Input file(s) or directory(s) to process. Leave empty or use "-" to read from stdin.
+    /// (In build mode, only the first path is used).
+    #[clap(value_name = "PATH", value_hint = clap::ValueHint::AnyPath)]
     pub input: Vec<Utf8PathBuf>,
 
     /// The number of threads to use for searching.
@@ -76,7 +76,7 @@ pub struct Args {
     pub no_ignore: bool,
 
     /// Search hidden files and directories.
-    #[clap(short = '.', long)]
+    #[clap(long)]
     pub hidden: bool,
 }
 
