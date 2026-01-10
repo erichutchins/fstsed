@@ -135,7 +135,7 @@ impl Iterator for FstMatches<'_, '_, '_> {
                 let is_start_word = if curr_byte < 128 {
                     is_word_char(curr_byte as char)
                 } else {
-                    self.haystack[start_pos..].chars().next().map_or(false, is_word_char)
+                    self.haystack[start_pos..].chars().next().is_some_and(is_word_char)
                 };
 
                 if is_start_word {
@@ -143,7 +143,7 @@ impl Iterator for FstMatches<'_, '_, '_> {
                     let is_prev_word = if prev_byte < 128 {
                         is_word_char(prev_byte as char)
                     } else {
-                        self.haystack[..start_pos].chars().rev().next().map_or(false, is_word_char)
+                        self.haystack[..start_pos].chars().next_back().is_some_and(is_word_char)
                     };
 
                     if is_prev_word {
@@ -292,7 +292,7 @@ impl<'a> FstSed {
                              // Unicode Fallback
                              if let Some(next_char) = value[i + 1..].chars().next() {
                                 // check last character of the current match
-                                if let Some(last_char) = value[..i+1].chars().rev().next() {
+                                if let Some(last_char) = value[..i+1].chars().next_back() {
                                     if is_word_char(last_char) {
                                         !is_word_char(next_char)
                                     } else {

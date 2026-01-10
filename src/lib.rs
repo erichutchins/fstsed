@@ -9,10 +9,10 @@ pub const BUFFERSIZE: usize = 64 * 1024;
 
 static IS_WORD_TABLE: LazyLock<[bool; 256]> = LazyLock::new(|| {
     let mut table = [false; 256];
-    for i in 0..256 {
+    for (i, slot) in table.iter_mut().enumerate() {
         let c = i as u8 as char;
         if c.is_alphanumeric() || c == '_' {
-            table[i] = true;
+            *slot = true;
         }
     }
     table
