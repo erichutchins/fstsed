@@ -3,27 +3,15 @@ use camino::Utf8PathBuf;
 use fst::raw::Fst;
 use memmap2::Mmap;
 use microtemplate::{render, Context};
-use regex::bytes::Regex;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::fs::File;
-use std::iter::Peekable;
-use std::sync::LazyLock;
 use termcolor::ColorChoice;
 
 const SENTINEL: u8 = 0;
 use bstr::ByteSlice;
 
-// RE_START and RE_NONWORD are used to find candidate positions
-// to evaluate for fst keyword matches. 
-// Note how these disable unicode matching (?i-u). This is a key 
-// performance improvement as it avoids the expensive unicode 
-// DFA construction and scanning for word boundaries.
-static RE_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i-u)^").unwrap());
-static RE_NONWORD: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?m)(?i-u)[^a-zA-Z0-9_]"#).unwrap());
-
-use crate::is_word_char;
+use crate::{is_word_byte, is_word_char};
 
 /// FstMatch represents a single match of a fst key in a haystack
 /// with its corresponding value from the fst.
@@ -68,12 +56,8 @@ pub struct FstMatches<'f, 'c, 'a> {
     fstsed: &'f FstSed,
     haystack: &'a [u8],
     cache: &'c mut FstCache,
-    skip: usize,
-    // chain the two regexes iters together to ensure we can search for matches at the beginning of
-    // a line as well as when word boundaries occur at beginning of line. both might match at pos
-    // 0, but operate in different modes
-    reiter:
-        Peekable<std::iter::Chain<regex::bytes::Matches<'f, 'a>, regex::bytes::Matches<'f, 'a>>>,
+    /// Current scan position in the haystack
+    pos: usize,
 }
 
 impl<'f, 'c, 'a> FstMatches<'f, 'c, 'a> {
@@ -82,11 +66,7 @@ impl<'f, 'c, 'a> FstMatches<'f, 'c, 'a> {
             fstsed,
             haystack,
             cache,
-            skip: 0,
-            reiter: RE_START
-                .find_iter(haystack)
-                .chain(RE_NONWORD.find_iter(haystack))
-                .peekable(),
+            pos: 0,
         }
     }
 
@@ -113,61 +93,64 @@ impl<'f, 'c, 'a> FstMatches<'f, 'c, 'a> {
     pub fn get_match_len(&self) -> usize {
         self.cache.key.len()
     }
+
+    /// Check if position `pos` is a valid word-start boundary.
+    /// Returns true if:
+    /// - pos == 0 (start of input), OR
+    /// - the character at pos-1 is NOT a word character
+    #[inline(always)]
+    fn is_word_start_boundary(&self, pos: usize) -> bool {
+        if pos == 0 {
+            return true;
+        }
+        let prev = self.haystack[pos - 1];
+        if prev < 128 {
+            // ASCII fast path
+            !is_word_byte(prev)
+        } else {
+            // Unicode fallback: decode the previous character
+            self.haystack[..pos]
+                .chars()
+                .next_back()
+                .map_or(true, |c| !is_word_char(c))
+        }
+    }
 }
 
 impl Iterator for FstMatches<'_, '_, '_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<usize> {
-        while let Some(m) = self.reiter.next() {
-            let start_pos = m.start() + self.skip;
-            self.skip = 1;
+        let haystack = self.haystack;
+        let len = haystack.len();
 
-            if start_pos >= self.haystack.len() {
+        while self.pos < len {
+            let start_pos = self.pos;
+            self.pos += 1;
+
+            // Quick check: is this position a potential word start?
+            // A word can start here if:
+            // 1. We're at position 0, OR
+            // 2. The previous byte is not a word character
+            //
+            // We also only attempt FST matching if the current byte could
+            // be the start of a key (any byte is valid, FST will reject quickly)
+            
+            if !self.is_word_start_boundary(start_pos) {
                 continue;
             }
 
-            // Boundary validation: if key starts with a word char, preceding char must not be a word char.
-            // This prevents partial matches inside other words (e.g. matching 'apple' in 'pineapple'),
-            // but correctly allows matches after non-word characters like '.' or '-' for DFIR indicators.
-            if start_pos > 0 {
-                let curr_byte = self.haystack[start_pos];
-                let is_start_word = if curr_byte < 128 {
-                    is_word_char(curr_byte as char)
-                } else {
-                    self.haystack[start_pos..].chars().next().is_some_and(is_word_char)
-                };
-
-                if is_start_word {
-                    let prev_byte = self.haystack[start_pos - 1];
-                    let is_prev_word = if prev_byte < 128 {
-                        is_word_char(prev_byte as char)
-                    } else {
-                        self.haystack[..start_pos].chars().next_back().is_some_and(is_word_char)
-                    };
-
-                    if is_prev_word {
-                        // Not a valid starting boundary
-                        continue;
-                    }
-                }
-            }
-
+            // Try to match at this position
             if self
                 .fstsed
-                .longest_match_at(self.haystack, start_pos, self.cache)
+                .longest_match_at(haystack, start_pos, self.cache)
                 .is_some()
             {
                 let match_start = self.cache.start;
                 let match_end = match_start + self.cache.key.len();
 
-                // when we have a match, we must advance the reiter position
-                // past the point of the last match length before we can resume searching
-                while self.reiter.peek().is_some()
-                    && self.reiter.peek().unwrap().start() < match_end
-                {
-                    self.reiter.next();
-                }
+                // Skip past the match to avoid overlapping matches
+                self.pos = match_end;
 
                 return Some(match_start);
             }
