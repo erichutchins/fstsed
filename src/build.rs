@@ -18,13 +18,77 @@ pub fn build_fstsed<R>(
 where
     R: BufReadExt,
 {
-    let mut vals: Vec<Vec<u8>> = Vec::new();
     let mut num_errors = 0;
     let mut num_blanks = 0;
 
     let is_pointer = key.starts_with('/');
 
-    // for this loop, we omit the line terminators
+    // --- CASE 1: STREAMING PATH (O(1) Memory) ---
+    if sorted {
+        eprintln!("Streaming sorted data directly to FST...");
+        let wtr = io::BufWriter::new(File::create(output)?);
+        let mut set = SetBuilder::new(wtr)?;
+        let mut last_line: Option<Vec<u8>> = None;
+
+        input.for_byte_line(|line| {
+            if line.is_empty() {
+                num_blanks += 1;
+                return Ok(true);
+            }
+
+            let jsonline: Value = match serde_json::from_slice(line) {
+                Ok(v) => v,
+                Err(_) => {
+                    num_errors += 1;
+                    return Ok(true);
+                }
+            };
+
+            let keyvalue = if is_pointer {
+                jsonline.pointer(key).and_then(Value::as_str)
+            } else {
+                jsonline.get(key).and_then(Value::as_str)
+            };
+
+            if let Some(keyvalue) = keyvalue {
+                let kv_bytes = keyvalue.as_bytes();
+                let mut tuple = Vec::with_capacity(kv_bytes.len() + 1 + (line.len() / 2));
+                tuple.extend_from_slice(kv_bytes);
+                tuple.push(SENTINEL);
+
+                if zstd::stream::copy_encode(line, &mut tuple, 3).is_ok() {
+                    // FST requires strictly increasing keys. Dedup on the fly.
+                    if let Some(ref last) = last_line {
+                        if tuple == *last {
+                            return Ok(true);
+                        }
+                    }
+                    set.insert(&tuple).expect("error building fstsed database");
+                    last_line = Some(tuple);
+                } else {
+                    num_errors += 1;
+                }
+            } else {
+                num_errors += 1;
+            }
+            Ok(true)
+        })?;
+
+        set.finish()?;
+        eprintln!("Processed with {num_errors} errors and {num_blanks} blank lines.");
+        return Ok(());
+    }
+
+    // --- CASE 2: BIG BUFFER PATH (Unsorted) ---
+    struct Entry {
+        start: usize,
+        end: usize,
+        key_len: usize,
+    }
+
+    let mut data_pool = Vec::new();
+    let mut entries = Vec::new();
+
     input.for_byte_line(|line| {
         if line.is_empty() {
             num_blanks += 1;
@@ -39,7 +103,6 @@ where
             }
         };
 
-        // Extract the value based on whether it's a pointer or not
         let keyvalue = if is_pointer {
             jsonline.pointer(key).and_then(Value::as_str)
         } else {
@@ -47,21 +110,22 @@ where
         };
 
         if let Some(keyvalue) = keyvalue {
-            // conservative sizing - allocate enough memory for key plus full uncompressed line
+            let start = data_pool.len();
             let kv_bytes = keyvalue.as_bytes();
-            let mut tuple = Vec::with_capacity(kv_bytes.len() + 1 + (line.len() / 2)); // Guessing 2x compression
+            let key_len = kv_bytes.len();
             
-            // start with the fst key itself
-            tuple.extend_from_slice(keyvalue.as_bytes());
-            // then add the sentinel to delineate key from data
-            tuple.push(SENTINEL);
+            data_pool.extend_from_slice(kv_bytes);
+            data_pool.push(SENTINEL);
 
-            // zstd compress the line and write directly into output tuple
-            if zstd::stream::copy_encode(line, &mut tuple, 3).is_err() {
-                num_errors += 1;
+            if zstd::stream::copy_encode(line, &mut data_pool, 3).is_ok() {
+                entries.push(Entry {
+                    start,
+                    end: data_pool.len(),
+                    key_len,
+                });
             } else {
-                // push the assembled tuple to our vector of vectors
-                vals.push(tuple);
+                data_pool.truncate(start);
+                num_errors += 1;
             }
         } else {
             num_errors += 1;
@@ -70,92 +134,62 @@ where
     })?;
 
     eprintln!(
-        "Processed {} lines successfully with {num_errors} errors and {num_blanks} blank lines...",
-        vals.len()
+        "Processed {} lines with {num_errors} errors and {num_blanks} blank lines...",
+        entries.len()
     );
 
-    if !sorted {
-        eprintln!("Sorting keys to build the fst...");
-        // sort the vector for fst
-        vals.sort_unstable();
-    }
+    eprintln!("Sorting keys to build the fst...");
+    entries.sort_unstable_by(|a, b| {
+        data_pool[a.start..a.end].cmp(&data_pool[b.start..b.end])
+    });
 
-    // Flag shadowed keys and keys with non-word characters
-    let mut shadowed_keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut nonword_keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    entries.dedup_by(|a, b| {
+        data_pool[a.start..a.end] == data_pool[b.start..b.end]
+    });
 
-    // 1. Warning if the input key starts or ends with non-word-chars
-    for v in &vals {
-        let key_end = v.iter().position(|&b| b == SENTINEL).unwrap();
-        let key_bytes = &v[..key_end];
-        let key_str = str::from_utf8(key_bytes).unwrap_or("???");
+    let mut shadowed_keys = std::collections::BTreeSet::new();
+    let mut nonword_keys = std::collections::BTreeSet::new();
 
-        if let Some(first) = key_str.chars().next() {
+    for i in 0..entries.len() {
+        let e1 = &entries[i];
+        let key1_bytes = &data_pool[e1.start..e1.start + e1.key_len];
+        let key1_str = str::from_utf8(key1_bytes).unwrap_or("???");
+
+        if let Some(first) = key1_str.chars().next() {
             if !crate::is_word_char(first) {
-                nonword_keys.insert(key_str.to_string());
-            } else if let Some(last) = key_str.chars().last() {
+                nonword_keys.insert(key1_str.to_string());
+            } else if let Some(last) = key1_str.chars().last() {
                 if !crate::is_word_char(last) {
-                    nonword_keys.insert(key_str.to_string());
+                    nonword_keys.insert(key1_str.to_string());
                 }
             }
         }
-    }
 
-    // 2. Identify shadowed keys (keys that are prefixes of longer keys)
-    // Since vals is sorted, we only need to compare adjacent elements.
-    use itermore::IterArrayWindows;
-    for [v1, v2] in vals.iter().array_windows() {
-        let key1_end = v1.iter().position(|&b| b == SENTINEL).unwrap();
-        let key1_bytes = &v1[..key1_end];
-
-        if v2.starts_with(key1_bytes) && v2[key1_end] != SENTINEL {
-            let key1_str = str::from_utf8(key1_bytes).unwrap_or("???");
-            shadowed_keys.insert(key1_str.to_string());
+        if i + 1 < entries.len() {
+            let e2 = &entries[i + 1];
+            let e2_data = &data_pool[e2.start..e2.end];
+            if e2_data.starts_with(key1_bytes) && e2_data[e1.key_len] != SENTINEL {
+                shadowed_keys.insert(key1_str.to_string());
+            }
         }
     }
 
     if !nonword_keys.is_empty() {
-        eprintln!(
-            "Warning: {} keys start or end with non-word characters. These may not be discovered correctly with default word boundary matching:",
-            nonword_keys.len()
-        );
-        for (i, key) in nonword_keys.iter().enumerate() {
-            if i < 10 {
-                eprintln!("  - {}", key);
-            } else {
-                eprintln!("  ... and {} more", nonword_keys.len() - 10);
-                break;
-            }
-        }
+        eprintln!("Warning: {} keys start or end with non-word characters...", nonword_keys.len());
+        for k in nonword_keys.iter().take(10) { eprintln!("  - {k}"); }
     }
 
     if !shadowed_keys.is_empty() {
-        eprintln!(
-            "Warning: {} keys are shadowed by longer terms and will not be matched independently:",
-            shadowed_keys.len()
-        );
-        for (i, key) in shadowed_keys.iter().enumerate() {
-            if i < 10 {
-                eprintln!("  - {}", key);
-            } else {
-                eprintln!("  ... and {} more", shadowed_keys.len() - 10);
-                break;
-            }
-        }
-        eprintln!("(Shadowed keys are prefixes of longer keys and are ignored when the longer key matches.)");
+        eprintln!("Warning: {} keys are shadowed...", shadowed_keys.len());
+        for k in shadowed_keys.iter().take(10) { eprintln!("  - {k}"); }
     }
 
-    // create file
+    eprintln!("Assembling the fst...");
     let wtr = io::BufWriter::new(File::create(output)?);
     let mut set = SetBuilder::new(wtr)?;
-
-    eprintln!("Assembling the fst...");
-    // insert into set builder
-    vals.iter().for_each(|line| {
-        set.insert(line).expect("error building fstsed database");
-    });
-
-    // close the fst
+    for e in entries {
+        set.insert(&data_pool[e.start..e.end])?;
+    }
     set.finish().map_err(From::from)
 }
 
