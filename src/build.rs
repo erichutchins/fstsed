@@ -3,7 +3,7 @@
 //! This module provides [`build_fstsed`] for creating FST databases from
 //! newline-delimited JSON (NDJSON) input.
 
-use anyhow::{Error, Result};
+use crate::error::{FstSedError, Result};
 use bstr::io::BufReadExt;
 use camino::Utf8PathBuf;
 use fst::SetBuilder;
@@ -57,11 +57,7 @@ fn parse_json_key(line: &[u8], key: &str, is_pointer: bool) -> Option<String> {
 ///
 /// This path uses O(1) memory since entries are written immediately
 /// without buffering.
-fn process_sorted_input<R>(
-    mut input: R,
-    key: &str,
-    output: &Utf8PathBuf,
-) -> Result<BuildStats, Error>
+fn process_sorted_input<R>(mut input: R, key: &str, output: &Utf8PathBuf) -> Result<BuildStats>
 where
     R: BufReadExt,
 {
@@ -69,8 +65,8 @@ where
     let is_pointer = key.starts_with('/');
 
     eprintln!("Streaming sorted data directly to FST...");
-    let wtr = BufWriter::new(File::create(output)?);
-    let mut set = SetBuilder::new(wtr)?;
+    let wtr = BufWriter::new(File::create(output).map_err(FstSedError::Build)?);
+    let mut set = SetBuilder::new(wtr).map_err(FstSedError::FstWrite)?;
     let mut last_line: Option<Vec<u8>> = None;
 
     input.for_byte_line(|line| {
@@ -119,11 +115,7 @@ where
 /// Processes unsorted input by buffering all entries, sorting, then writing.
 ///
 /// This path requires O(n) memory to hold all entries before sorting.
-fn process_unsorted_input<R>(
-    mut input: R,
-    key: &str,
-    output: &Utf8PathBuf,
-) -> Result<BuildStats, Error>
+fn process_unsorted_input<R>(mut input: R, key: &str, output: &Utf8PathBuf) -> Result<BuildStats>
 where
     R: BufReadExt,
 {
@@ -180,12 +172,13 @@ where
     detect_problematic_keys(&entries, &data_pool);
 
     eprintln!("Assembling the fst...");
-    let wtr = BufWriter::new(File::create(output)?);
-    let mut set = SetBuilder::new(wtr)?;
+    let wtr = BufWriter::new(File::create(output).map_err(FstSedError::Build)?);
+    let mut set = SetBuilder::new(wtr).map_err(FstSedError::FstWrite)?;
     for e in entries {
-        set.insert(&data_pool[e.start..e.end])?;
+        set.insert(&data_pool[e.start..e.end])
+            .map_err(FstSedError::FstWrite)?;
     }
-    set.finish()?;
+    set.finish().map_err(FstSedError::FstWrite)?;
 
     Ok(stats)
 }
@@ -266,7 +259,7 @@ fn detect_problematic_keys(entries: &[Entry], data_pool: &[u8]) {
 ///
 /// Panics if sorted input contains out-of-order keys, as this indicates
 /// corrupted or incorrectly sorted input data.
-pub fn build_fstsed<R>(input: R, key: &str, output: &Utf8PathBuf, sorted: bool) -> Result<(), Error>
+pub fn build_fstsed<R>(input: R, key: &str, output: &Utf8PathBuf, sorted: bool) -> Result<()>
 where
     R: BufReadExt,
 {

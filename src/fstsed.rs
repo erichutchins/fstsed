@@ -3,7 +3,7 @@
 //! This module provides the core [`FstSed`] type for performing efficient
 //! multi-pattern matching using Finite State Transducers.
 
-use anyhow::{Context as AnyhowContext, Error, Result};
+use crate::error::{FstSedError, Result};
 use camino::Utf8Path;
 use fst::raw::Fst;
 use memmap2::Mmap;
@@ -240,9 +240,10 @@ pub struct FstSed {
 ///
 /// Adapted from <https://github.com/BurntSushi/fst/blob/master/fst-bin/src/util.rs>
 #[inline]
-unsafe fn mmap_fst(path: &Utf8Path) -> Result<Fst<Mmap>, Error> {
-    let mmap = Mmap::map(&File::open(path)?)?;
-    let fst = Fst::new(mmap)?;
+unsafe fn mmap_fst(path: &Utf8Path) -> Result<Fst<Mmap>> {
+    let mmap = Mmap::map(&File::open(path).map_err(FstSedError::FstMmap)?)
+        .map_err(FstSedError::FstMmap)?;
+    let fst = Fst::new(mmap).map_err(FstSedError::FstParse)?;
     Ok(fst)
 }
 
@@ -280,7 +281,7 @@ impl<'a> FstSed {
         fstpath: impl AsRef<Utf8Path>,
         user_template: Option<String>,
         color: ColorChoice,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self> {
         let fstpath = fstpath.as_ref();
         let mut template = user_template.unwrap_or_else(|| "<{key}|{value}>".to_string());
         let has_json_keys = test_for_json_keys(&template);
@@ -292,8 +293,7 @@ impl<'a> FstSed {
 
         // SAFETY: Memory-mapped FST files must not be modified while in use.
         // The caller is responsible for ensuring file stability.
-        let fst = unsafe { mmap_fst(fstpath) }
-            .with_context(|| format!("Failed to open FST database: {fstpath}"))?;
+        let fst = unsafe { mmap_fst(fstpath) }?;
 
         Ok(Self {
             fst,

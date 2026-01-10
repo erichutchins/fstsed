@@ -39,7 +39,9 @@ fn main() -> Result<()> {
     };
 
     // Initialize FstSed and wrap in Arc for sharing across threads
-    let fsed = Arc::new(FstSed::new(args.fst, args.template, colormode)?);
+    let fsed = Arc::new(
+        FstSed::new(args.fst, args.template, colormode).map_err(|e| anyhow::anyhow!("{}", e))?,
+    );
 
     // For stdout output
     let writer = Arc::new(BufferWriter::stdout(colormode));
@@ -162,4 +164,5 @@ fn run_build(args: Args) -> Result<()> {
     };
 
     fstsed::build::build_fstsed(reader, &args.key.unwrap(), &args.fst, args.sorted)
+        .map_err(|e| anyhow::anyhow!("{}", e))
 }

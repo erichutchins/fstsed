@@ -59,6 +59,7 @@
 
 pub mod build;
 pub mod cli;
+pub mod error;
 pub mod fstsed;
 pub mod jsonquotes;
 pub mod sink;

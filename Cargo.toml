@@ -41,4 +41,8 @@ memmap2 = "0.9.9"
 microtemplate = "1.0.3"
 serde_json = "1.0.149"
 termcolor = "1.4.1"
+thiserror = "1.0"
 zstd = "0.13.3"
+
+[dev-dependencies]
+proptest = "1.4"
