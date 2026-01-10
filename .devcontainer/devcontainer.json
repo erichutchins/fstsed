@@ -1,0 +1,11 @@
+{
+  "name": "fstsed — Rust Dev Container",
+  "image": "mcr.microsoft.com/devcontainers/rust:2-1",
+  "settings": {
+    "terminal.integrated.shell.linux": "/bin/bash",
+  },
+  "extensions": ["rust-lang.rust-analyzer", "serayuzgur.crates"],
+  "postCreateCommand": "bash -lc \"rustup component add clippy rustfmt && cargo install --locked cargo-watch || true\"",
+  "remoteUser": "vscode",
+  "workspaceFolder": "/workspace",
+}
