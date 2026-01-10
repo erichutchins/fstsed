@@ -43,7 +43,9 @@ fn test_volexity_example() {
 
     {
         let mut stdin = child.stdin.take().unwrap();
-        stdin.write_all(b"test of avsvmcloud.com metadata\n").unwrap();
+        stdin
+            .write_all(b"test of avsvmcloud.com metadata\n")
+            .unwrap();
     }
 
     let out = child.wait_with_output().unwrap();
@@ -66,7 +68,9 @@ fn test_volexity_example() {
 
     {
         let mut stdin = child.stdin.take().unwrap();
-        stdin.write_all(b"test of avsvmcloud.com metadata\n").unwrap();
+        stdin
+            .write_all(b"test of avsvmcloud.com metadata\n")
+            .unwrap();
     }
 
     let out = child.wait_with_output().unwrap();
@@ -124,7 +128,7 @@ fn test_burmese_translation_example() {
 
     let out = child.wait_with_output().unwrap();
     let result = String::from_utf8(out.stdout).unwrap();
-    
+
     let expected_part = "<ဗိုလခုပမူးကီး> (Senior General of Myanmar Army)";
     assert!(result.contains(expected_part));
 

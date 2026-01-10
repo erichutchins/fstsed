@@ -11,10 +11,10 @@ fn get_bin() -> String {
 fn test_dfir_indicators() {
     let bin = get_bin();
     let dir = std::env::temp_dir();
-    let fst_path = Utf8PathBuf::from(dir.to_str().unwrap())
-        .join(format!("dfir_{}.fst", std::process::id()));
-    let json_path = Utf8PathBuf::from(dir.to_str().unwrap())
-        .join(format!("dfir_{}.json", std::process::id()));
+    let fst_path =
+        Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("dfir_{}.fst", std::process::id()));
+    let json_path =
+        Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("dfir_{}.json", std::process::id()));
 
     let json_content = r#"{"key":"8.8.8.8","val":"google-dns"}
 {"key":"avsvmcloud.com","val":"solarwinds-ioc"}
@@ -35,7 +35,11 @@ fn test_dfir_indicators() {
     assert!(status.success());
 
     let mut cache = FstCache::new();
-    let fsed = FstSed::new(fst_path.clone(), Some("{key} ({val})".to_string()), termcolor::ColorChoice::Never);
+    let fsed = FstSed::new(
+        fst_path.clone(),
+        Some("{key} ({val})".to_string()),
+        termcolor::ColorChoice::Never,
+    );
 
     // 1. IP Address Tests
     let input1 = "check 8.8.8.8 for details";
@@ -60,12 +64,15 @@ fn test_dfir_indicators() {
     let input4 = "ran C:\\Windows\\System32\\cmd.exe now";
     let mut iter = fsed.find_iter(input4.as_bytes(), &mut cache);
     assert_eq!(iter.next(), Some(4));
-    assert_eq!(iter.get_match().render(), "C:\\Windows\\System32\\cmd.exe (shell)");
+    assert_eq!(
+        iter.get_match().render(),
+        "C:\\Windows\\System32\\cmd.exe (shell)"
+    );
 
     // 5. Lookbehind check: exclude 18.8.8.8 but allow test.8.8.8.8
     let input5 = "exclude 18.8.8.8 but match test.8.8.8.8 and 1.8.8.8.8";
     let mut iter = fsed.find_iter(input5.as_bytes(), &mut cache);
-    
+
     // First match should be test.8.8.8.8 (pos 32)
     let m1 = iter.next();
     assert_eq!(m1, Some(32));
@@ -75,7 +82,7 @@ fn test_dfir_indicators() {
     let m2 = iter.next();
     assert_eq!(m2, Some(46));
     assert_eq!(iter.get_match().render(), "8.8.8.8 (google-dns)");
-    
+
     // Should be no more matches
     assert!(iter.next().is_none());
 

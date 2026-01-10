@@ -112,7 +112,7 @@ impl<'f, 'c, 'a> FstMatches<'f, 'c, 'a> {
             self.haystack[..pos]
                 .chars()
                 .next_back()
-                .map_or(true, |c| !is_word_char(c))
+                .is_none_or(|c| !is_word_char(c))
         }
     }
 }
@@ -135,7 +135,7 @@ impl Iterator for FstMatches<'_, '_, '_> {
             //
             // We also only attempt FST matching if the current byte could
             // be the start of a key (any byte is valid, FST will reject quickly)
-            
+
             if !self.is_word_start_boundary(start_pos) {
                 continue;
             }
@@ -257,37 +257,41 @@ impl<'a> FstSed {
 
                 if let Some(sentinel_index) = node.find_input(SENTINEL) {
                     // validation: if key ends with a word char, next char must not be a word char.
-                    // Like the leading boundary check, this ensures we don't match 'apple' 
+                    // Like the leading boundary check, this ensures we don't match 'apple'
                     // inside 'applesauce'.
                     let is_boundary = if i == value.len() - 1 {
                         true
                     } else {
                         let next_byte = value[i + 1];
                         if b < 128 && next_byte < 128 {
-                             // ASCII fast path: used to check trailing word character boundaries
-                             // without a full UTF-8 decode.
-                             if is_word_char(b as char) {
-                                 !is_word_char(next_byte as char)
-                             } else {
-                                 true
-                             }
+                            // ASCII fast path: used to check trailing word character boundaries
+                            // without a full UTF-8 decode.
+                            if is_word_char(b as char) {
+                                !is_word_char(next_byte as char)
+                            } else {
+                                true
+                            }
                         } else {
-                             // Unicode Fallback
-                             if let Some(next_char) = value[i + 1..].chars().next() {
+                            // Unicode Fallback
+                            if let Some(next_char) = value[i + 1..].chars().next() {
                                 // check last character of the current match
-                                if let Some(last_char) = value[..i+1].chars().next_back() {
+                                if let Some(last_char) = value[..i + 1].chars().next_back() {
                                     if is_word_char(last_char) {
                                         !is_word_char(next_char)
                                     } else {
                                         true
                                     }
-                                } else { true }
-                             } else { true }
+                                } else {
+                                    true
+                                }
+                            } else {
+                                true
+                            }
                         }
                     };
 
                     if is_boundary {
-                        // Remember this as a potentially longest match. We don't retrieve the 
+                        // Remember this as a potentially longest match. We don't retrieve the
                         // value yet to avoid unnecessary work if we find a longer match later.
                         last_match_info = Some((node, sentinel_index, i));
                     }
@@ -296,7 +300,7 @@ impl<'a> FstSed {
                 break;
             }
         }
-        
+
         if let Some((match_node, sentinel_index, i)) = last_match_info {
             // We found at least one match, retrieve the one with the longest key.
             cache.key.clear();

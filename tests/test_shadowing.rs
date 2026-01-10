@@ -10,8 +10,8 @@ fn get_bin() -> String {
 fn test_shadowing_behavior() {
     let bin = get_bin();
     let dir = std::env::temp_dir();
-    let fst_path = Utf8PathBuf::from(dir.to_str().unwrap())
-        .join(format!("shadow_{}.fst", std::process::id()));
+    let fst_path =
+        Utf8PathBuf::from(dir.to_str().unwrap()).join(format!("shadow_{}.fst", std::process::id()));
     let json_path = Utf8PathBuf::from(dir.to_str().unwrap())
         .join(format!("shadow_{}.json", std::process::id()));
 
@@ -41,14 +41,14 @@ fn test_shadowing_behavior() {
         .unwrap();
 
     let stderr = String::from_utf8(output.stderr).unwrap();
-    
+
     // Check for Shadowing warnings
     // Shadowed: A, A-B, ABC
     assert!(stderr.contains("Warning: 3 keys are shadowed"));
     assert!(stderr.contains("- ABC"));
     assert!(stderr.contains("- A"));
     assert!(stderr.contains("- A-B"));
-    
+
     // Check for Non-word character warning
     // Only !EXCLAMATION and "TRAILING " start or end with non-word chars.
     // ABC-DE, A-B, A-B-C, KEY WORD are internal.

@@ -113,7 +113,7 @@ where
             let start = data_pool.len();
             let kv_bytes = keyvalue.as_bytes();
             let key_len = kv_bytes.len();
-            
+
             data_pool.extend_from_slice(kv_bytes);
             data_pool.push(SENTINEL);
 
@@ -139,13 +139,9 @@ where
     );
 
     eprintln!("Sorting keys to build the fst...");
-    entries.sort_unstable_by(|a, b| {
-        data_pool[a.start..a.end].cmp(&data_pool[b.start..b.end])
-    });
+    entries.sort_unstable_by(|a, b| data_pool[a.start..a.end].cmp(&data_pool[b.start..b.end]));
 
-    entries.dedup_by(|a, b| {
-        data_pool[a.start..a.end] == data_pool[b.start..b.end]
-    });
+    entries.dedup_by(|a, b| data_pool[a.start..a.end] == data_pool[b.start..b.end]);
 
     let mut shadowed_keys = std::collections::BTreeSet::new();
     let mut nonword_keys = std::collections::BTreeSet::new();
@@ -175,13 +171,20 @@ where
     }
 
     if !nonword_keys.is_empty() {
-        eprintln!("Warning: {} keys start or end with non-word characters...", nonword_keys.len());
-        for k in nonword_keys.iter().take(10) { eprintln!("  - {k}"); }
+        eprintln!(
+            "Warning: {} keys start or end with non-word characters...",
+            nonword_keys.len()
+        );
+        for k in nonword_keys.iter().take(10) {
+            eprintln!("  - {k}");
+        }
     }
 
     if !shadowed_keys.is_empty() {
         eprintln!("Warning: {} keys are shadowed...", shadowed_keys.len());
-        for k in shadowed_keys.iter().take(10) { eprintln!("  - {k}"); }
+        for k in shadowed_keys.iter().take(10) {
+            eprintln!("  - {k}");
+        }
     }
 
     eprintln!("Assembling the fst...");
