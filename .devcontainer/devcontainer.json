@@ -7,5 +7,5 @@
   "extensions": ["rust-lang.rust-analyzer", "serayuzgur.crates"],
   "postCreateCommand": "bash -lc \"rustup component add clippy rustfmt && cargo install --locked cargo-watch || true\"",
   "remoteUser": "vscode",
-  "workspaceFolder": "/workspace/fstsed",
+  "workspaceFolder": "/workspaces/fstsed",
 }

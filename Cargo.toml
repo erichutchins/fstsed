@@ -45,4 +45,12 @@ thiserror = "1.0"
 zstd = "0.13.3"
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+fake = { version = "4", features = ["derive"] }
 proptest = "1.4"
+rand = "0.8"
+tempfile = "3"
+
+[[bench]]
+name = "search_bench"
+harness = false
