@@ -1,5 +1,10 @@
+//! FST-based search engine for text replacement.
+//!
+//! This module provides the core [`FstSed`] type for performing efficient
+//! multi-pattern matching using Finite State Transducers.
+
 use anyhow::{Context as AnyhowContext, Error, Result};
-use camino::Utf8PathBuf;
+use camino::Utf8Path;
 use fst::raw::Fst;
 use memmap2::Mmap;
 use microtemplate::{render, Context};
@@ -12,8 +17,8 @@ use bstr::ByteSlice;
 
 use crate::{is_word_byte, is_word_char, SENTINEL};
 
-/// FstMatch represents a single match of a fst key in a haystack
-/// with its corresponding value from the fst.
+/// Represents a single match of an FST key in a haystack
+/// with its corresponding value from the FST.
 pub struct FstMatch<'a> {
     key: Cow<'a, str>,
     value: Cow<'a, str>,
@@ -22,6 +27,11 @@ pub struct FstMatch<'a> {
 }
 
 impl FstMatch<'_> {
+    /// Renders the match using the configured template.
+    ///
+    /// Template variables like `{key}` and `{value}` are replaced with
+    /// the actual matched key and its associated value.
+    #[must_use]
     pub fn render(&self) -> String {
         render(self.template, self)
     }
@@ -69,10 +79,26 @@ impl<'f, 'c, 'a> FstMatches<'f, 'c, 'a> {
         }
     }
 
+    /// Returns the current match with its key, value, and template.
+    ///
+    /// This method decompresses the stored value and constructs an [`FstMatch`]
+    /// that can be used for rendering.
+    ///
+    /// # Note
+    ///
+    /// If decompression fails, the value will be empty. This can happen if
+    /// the FST database is corrupted.
     pub fn get_match(&mut self) -> FstMatch<'_> {
         // Decompress the value into scratch buffer
         self.cache.scratch.clear();
-        let _ = zstd::stream::copy_decode(self.cache.value.as_slice(), &mut self.cache.scratch);
+        if let Err(e) =
+            zstd::stream::copy_decode(self.cache.value.as_slice(), &mut self.cache.scratch)
+        {
+            eprintln!(
+                "Warning: failed to decompress value for key '{}': {e}",
+                String::from_utf8_lossy(&self.cache.key)
+            );
+        }
 
         FstMatch {
             key: String::from_utf8_lossy(&self.cache.key),
@@ -89,15 +115,18 @@ impl<'f, 'c, 'a> FstMatches<'f, 'c, 'a> {
         }
     }
 
+    /// Returns the length of the matched key in bytes.
+    #[must_use]
     pub fn get_match_len(&self) -> usize {
         self.cache.key.len()
     }
 
     /// Check if position `pos` is a valid word-start boundary.
-    /// Returns true if:
-    /// - pos == 0 (start of input), OR
-    /// - the character at pos-1 is NOT a word character
-    #[inline(always)]
+    ///
+    /// Returns `true` if:
+    /// - `pos == 0` (start of input), OR
+    /// - the character at `pos-1` is NOT a word character
+    #[inline]
     fn is_word_start_boundary(&self, pos: usize) -> bool {
         if pos == 0 {
             return true;
@@ -158,7 +187,10 @@ impl Iterator for FstMatches<'_, '_, '_> {
     }
 }
 
-/// FstCache holds reusable buffers for search operations
+/// Holds reusable buffers for search operations.
+///
+/// Creating an `FstCache` once and reusing it across multiple searches
+/// avoids repeated memory allocations.
 pub struct FstCache {
     key: Vec<u8>,
     value: Vec<u8>,
@@ -167,6 +199,8 @@ pub struct FstCache {
 }
 
 impl FstCache {
+    /// Creates a new cache with pre-allocated buffers.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             key: Vec::with_capacity(256),
@@ -183,24 +217,39 @@ impl Default for FstCache {
     }
 }
 
+/// The main FST-based search engine.
+///
+/// `FstSed` wraps a memory-mapped FST database and provides methods for
+/// finding matches in text with word boundary detection.
 pub struct FstSed {
     fst: Fst<Mmap>,
+    /// Color choice for output formatting.
     pub color: ColorChoice,
+    /// Template string for rendering matches.
     pub template: String,
     has_json_keys: bool,
 }
 
-// from https://github.com/BurntSushi/fst/blob/master/fst-bin/src/util.rs
+/// Memory-maps an FST file from disk.
+///
+/// # Safety
+///
+/// The caller must ensure the file is not modified while the returned
+/// FST is in use. Modifying the underlying file while it's memory-mapped
+/// leads to undefined behavior.
+///
+/// Adapted from <https://github.com/BurntSushi/fst/blob/master/fst-bin/src/util.rs>
 #[inline]
-unsafe fn mmap_fst(path: Utf8PathBuf) -> Result<Fst<Mmap>, Error> {
+unsafe fn mmap_fst(path: &Utf8Path) -> Result<Fst<Mmap>, Error> {
     let mmap = Mmap::map(&File::open(path)?)?;
     let fst = Fst::new(mmap)?;
     Ok(fst)
 }
 
-/// Helper function to determine if user-specified template string will require
-/// json deserialization. Returns true if the template contains a {var} beyond
-/// {key} and [value}
+/// Determines if a template string requires JSON deserialization.
+///
+/// Returns `true` if the template contains template variables beyond
+/// `{key}` and `{value}`, indicating that JSON field access is needed.
 fn test_for_json_keys(template: &str) -> bool {
     template
         .split('{')
@@ -228,10 +277,11 @@ impl<'a> FstSed {
     /// This function uses memory-mapped I/O internally. The caller must ensure
     /// that the FST file is not modified while the `FstSed` instance is in use.
     pub fn new(
-        fstpath: Utf8PathBuf,
+        fstpath: impl AsRef<Utf8Path>,
         user_template: Option<String>,
         color: ColorChoice,
     ) -> Result<Self, Error> {
+        let fstpath = fstpath.as_ref();
         let mut template = user_template.unwrap_or_else(|| "<{key}|{value}>".to_string());
         let has_json_keys = test_for_json_keys(&template);
 
@@ -242,8 +292,8 @@ impl<'a> FstSed {
 
         // SAFETY: Memory-mapped FST files must not be modified while in use.
         // The caller is responsible for ensuring file stability.
-        let fst = unsafe { mmap_fst(fstpath.clone()) }
-            .with_context(|| format!("Failed to open FST database: {}", fstpath))?;
+        let fst = unsafe { mmap_fst(fstpath) }
+            .with_context(|| format!("Failed to open FST database: {fstpath}"))?;
 
         Ok(Self {
             fst,
@@ -253,6 +303,10 @@ impl<'a> FstSed {
         })
     }
 
+    /// Returns an iterator over all matches in the given text.
+    ///
+    /// Matches are found at word boundaries only, and the longest match
+    /// at each position is returned.
     #[inline]
     pub fn find_iter<'f, 'c>(
         &'f self,
@@ -262,7 +316,12 @@ impl<'a> FstSed {
         FstMatches::new(self, text, cache)
     }
 
-    // adapted from https://github.com/BurntSushi/fst/pull/104/files
+    /// Finds the longest match starting at the given position.
+    ///
+    /// Returns `Some(length)` if a match was found, storing the match
+    /// details in the provided cache. Returns `None` if no match exists.
+    ///
+    /// Adapted from <https://github.com/BurntSushi/fst/pull/104/files>
     #[inline]
     pub fn longest_match_at(
         &self,
@@ -299,7 +358,7 @@ impl<'a> FstSed {
                             // Unicode Fallback
                             if let Some(next_char) = value[i + 1..].chars().next() {
                                 // check last character of the current match
-                                if let Some(last_char) = value[..i + 1].chars().next_back() {
+                                if let Some(last_char) = value[..=i].chars().next_back() {
                                     if is_word_char(last_char) {
                                         !is_word_char(next_char)
                                     } else {
@@ -329,7 +388,7 @@ impl<'a> FstSed {
             // We found at least one match, retrieve the one with the longest key.
             cache.key.clear();
             cache.value.clear();
-            cache.key.extend_from_slice(&value[..i + 1]);
+            cache.key.extend_from_slice(&value[..=i]);
             cache.start = start;
 
             // find the sentinel node, then read to the final node
@@ -352,6 +411,9 @@ impl<'a> FstSed {
         None
     }
 
+    /// Finds the longest match starting at position 0.
+    ///
+    /// This is a convenience method equivalent to `longest_match_at(text, 0, cache)`.
     #[inline]
     pub fn longest_match(&self, text: &'a [u8], cache: &mut FstCache) -> Option<usize> {
         self.longest_match_at(text, 0, cache)
@@ -420,7 +482,7 @@ mod tests {
     fn test_fstsed_search() {
         let fst_path =
             create_test_fst("search", &[("foo", "bar"), ("baz", "qux"), ("京", "tokyo")]);
-        let fsed = FstSed::new(fst_path.clone(), None, ColorChoice::Never).unwrap();
+        let fsed = FstSed::new(&fst_path, None, ColorChoice::Never).unwrap();
 
         let haystack = "foo baz foobar 京 text".as_bytes();
         let mut cache = FstCache::new();
@@ -434,7 +496,7 @@ mod tests {
     #[test]
     fn test_fstsed_overlap_and_none() {
         let fst_path = create_test_fst("overlap", &[("apple", "A"), ("apple pie", "B")]);
-        let fsed = FstSed::new(fst_path.clone(), None, ColorChoice::Never).unwrap();
+        let fsed = FstSed::new(&fst_path, None, ColorChoice::Never).unwrap();
 
         let haystack = "apple apple pie applepie".as_bytes();
         let mut cache = FstCache::new();

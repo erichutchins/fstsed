@@ -1,8 +1,13 @@
+//! JSON string range extraction.
+//!
+//! This module provides utilities for finding JSON string boundaries without
+//! fully deserializing JSON documents.
+
 use itermore::IterArrayChunks;
 use memchr::memchr2_iter;
 use memchr::Memchr2;
 
-/// Identifies the structural double quotation marks bounding strings in json text.
+/// Identifies the structural double quotation marks bounding strings in JSON text.
 /// Searches for all double quotes and backslashes simultaneously using memchr2. Then, for each
 /// match, record state to determine if the double quote was escaped by the backslash or is a
 /// real structural quote. The iterator returns a flat, linear feed of structural quote indices
@@ -14,6 +19,8 @@ pub struct JsonQuotes<'a> {
 }
 
 impl<'a> JsonQuotes<'a> {
+    /// Creates a new `JsonQuotes` iterator over the given bytes.
+    #[must_use]
     pub fn new(haystack: &'a [u8]) -> Self {
         Self {
             haystack,
@@ -25,7 +32,7 @@ impl<'a> JsonQuotes<'a> {
 }
 
 impl Iterator for JsonQuotes<'_> {
-    /// Item is (index, has_seen_escape_since_last_yield)
+    /// Item is `(index, has_seen_escape_since_last_yield)`.
     type Item = (usize, bool);
 
     #[inline]
@@ -50,27 +57,27 @@ impl Iterator for JsonQuotes<'_> {
                 let seen_esc = self.has_esc;
                 self.has_esc = false;
                 return Some((index, seen_esc));
-            } else {
-                // we have a \
-                // mark it as a potential escape for the NEXT match
-                self.pending_escape = Some(index);
-                self.has_esc = true;
             }
+
+            // we have a \
+            // mark it as a potential escape for the NEXT match
+            self.pending_escape = Some(index);
+            self.has_esc = true;
         }
         None
     }
 }
 
-/// Isolate just the ranges of strings in json to avoid deserializing the entire structure. Uses
-/// memchr2 to find all doublequotes and backslashes simultaneously and tracks state to determine
-/// when the backslashes escape the quotes.
+/// Isolates just the ranges of strings in JSON to avoid deserializing the entire structure.
 ///
-/// This function returns an iterator of (start, end, has_escapes) tuples of the string ranges.
-/// *Note* the indices include the quotation marks themselves!
+/// Uses `memchr2` to find all double quotes and backslashes simultaneously and tracks state
+/// to determine when the backslashes escape the quotes.
+///
+/// This function returns an iterator of `(start, end, has_escapes)` tuples of the string ranges.
+///
+/// **Note:** the indices include the quotation marks themselves!
 #[inline]
-pub fn jsonquotes_range_iter<'a>(
-    haystack: &'a [u8],
-) -> impl Iterator<Item = (usize, usize, bool)> + 'a {
+pub fn jsonquotes_range_iter(haystack: &[u8]) -> impl Iterator<Item = (usize, usize, bool)> + '_ {
     // Rather than have JsonQuotes bother with knowing if a quote is an open or close,
     // the indices come to us in a flat series and we just iterate in chunks of
     // two giving us each start, stop index. We add 1 so when this tuple is used to

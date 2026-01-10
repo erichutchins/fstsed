@@ -1,4 +1,4 @@
-//! Sink implementation for integrating FstSed with grep-searcher.
+//! Sink implementation for integrating `FstSed` with `grep-searcher`.
 //!
 //! This module provides [`FstSedSink`], which acts as the bridge between
 //! `grep-searcher` and `fstsed`. It receives lines from the searcher,
@@ -32,7 +32,7 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
     ///
     /// # Arguments
     ///
-    /// * `fsed` - Reference to the FstSed instance for pattern matching
+    /// * `fsed` - Reference to the `FstSed` instance for pattern matching
     /// * `cache` - Mutable reference to the FST cache for reuse
     /// * `buf` - Mutable reference to the output buffer
     /// * `only_matching` - If true, only output matching portions
@@ -55,6 +55,10 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
     }
 
     /// Processes plain text input, replacing matches with rendered templates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the output buffer fails.
     #[inline]
     pub fn process_text(&mut self, input: &[u8]) -> Result<bool, io::Error> {
         let mut lastpos: usize = 0;
@@ -82,6 +86,10 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
     }
 
     /// Processes JSON input, searching within string values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the output buffer fails.
     #[inline]
     pub fn process_json(&mut self, line: &[u8]) -> Result<bool, io::Error> {
         let mut lastpos: usize = 0;
@@ -94,11 +102,7 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
             // CONTENT: line[start+1..end-1]
             let raw_content = &line[start + 1..end - 1];
 
-            if !has_esc {
-                // FAST PATH: No escapes to handle!
-                // We can run FST directly on the raw bytes from the line.
-                self.process_content(raw_content)?;
-            } else {
+            if has_esc {
                 // SLOW PATH: Use Cow to avoid allocation if possible,
                 // though has_esc=true means we'll likely allocate once.
                 match serde_json::from_slice::<std::borrow::Cow<str>>(&line[start..end]) {
@@ -109,6 +113,10 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
                         }
                     }
                 }
+            } else {
+                // FAST PATH: No escapes to handle!
+                // We can run FST directly on the raw bytes from the line.
+                self.process_content(raw_content)?;
             }
             lastpos = end;
         }
@@ -119,6 +127,15 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
     }
 
     /// Processes content within a JSON string value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the output buffer fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the processed content is not valid UTF-8. This should not
+    /// occur in practice since JSON strings are required to be valid UTF-8.
     #[inline]
     pub fn process_content(&mut self, input: &[u8]) -> Result<(), io::Error> {
         self.temp_buf.clear();

@@ -20,6 +20,7 @@ use clap::{Parser, ValueEnum};
   JSON search mode (only search inside quoted JSON strings):
     fstsed -f data.fst --json input.json"
 )]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Args {
     /// Show only nonempty parts of lines that match
     #[clap(short, long)]

@@ -94,7 +94,7 @@ fn main() -> Result<()> {
                 let entry = match result {
                     Ok(entry) => entry,
                     Err(err) => {
-                        eprintln!("{}", err);
+                        eprintln!("{err}");
                         return ignore::WalkState::Continue;
                     }
                 };
