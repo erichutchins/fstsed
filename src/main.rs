@@ -1,14 +1,14 @@
 use anyhow::{bail, Result};
+use bstr::io::BufReadExt;
 use camino::Utf8PathBuf;
 use clap::Parser;
 use fstsed::cli::{Args, ArgsColorChoice};
 use fstsed::fstsed::{FstCache, FstSed};
 use fstsed::sink::FstSedSink;
 use fstsed::BUFFERSIZE;
-use grep_regex::RegexMatcher;
-use grep_searcher::Searcher;
 use ignore::WalkBuilder;
-use std::io::{self, IsTerminal};
+use std::fs::File;
+use std::io::{self, BufReader, IsTerminal};
 use std::path::Path;
 use std::sync::Arc;
 use termcolor::{BufferWriter, ColorChoice};
@@ -51,13 +51,20 @@ fn main() -> Result<()> {
         // Single threaded stdin processing
         let mut buf = writer.buffer();
         let mut cache = FstCache::new();
-        // Match start of every line
-        let matcher = RegexMatcher::new(r"(?m)^").unwrap();
+        let mut sink = FstSedSink::new(&fsed, &mut cache, &mut buf, args.only_matching);
 
-        let sink = FstSedSink::new(&fsed, &mut cache, &mut buf, args.only_matching, args.json);
+        let stdin = io::stdin();
+        let mut reader = BufReader::with_capacity(BUFFERSIZE, stdin.lock());
 
-        // Search stdin
-        Searcher::new().search_reader(&matcher, io::stdin(), sink)?;
+        reader.for_byte_line_with_terminator(|line| {
+            if args.json {
+                sink.process_json(line)?;
+            } else {
+                sink.process_text(line)?;
+            }
+            Ok(true)
+        })?;
+
         writer.print(&buf)?;
     } else {
         // Parallel directory walking
@@ -87,8 +94,6 @@ fn main() -> Result<()> {
             let writer = writer.clone();
             let mut buf = writer.buffer();
             let mut cache = FstCache::new();
-            // Match start of every line
-            let matcher = RegexMatcher::new(r"(?m)^").unwrap();
 
             Box::new(move |result| {
                 let entry = match result {
@@ -103,12 +108,28 @@ fn main() -> Result<()> {
                     return ignore::WalkState::Continue;
                 }
 
-                let sink =
-                    FstSedSink::new(&fsed, &mut cache, &mut buf, args.only_matching, args.json);
+                let file = match File::open(entry.path()) {
+                    Ok(f) => f,
+                    Err(err) => {
+                        eprintln!("{}: {err}", entry.path().display());
+                        return ignore::WalkState::Continue;
+                    }
+                };
 
-                let mut searcher = Searcher::new();
-                if let Err(err) = searcher.search_path(&matcher, entry.path(), sink) {
-                    eprintln!("{}: {}", entry.path().display(), err);
+                let mut reader = BufReader::with_capacity(BUFFERSIZE, file);
+                let mut sink = FstSedSink::new(&fsed, &mut cache, &mut buf, args.only_matching);
+
+                let result = reader.for_byte_line_with_terminator(|line| {
+                    if args.json {
+                        sink.process_json(line)?;
+                    } else {
+                        sink.process_text(line)?;
+                    }
+                    Ok(true)
+                });
+
+                if let Err(err) = result {
+                    eprintln!("{}: {err}", entry.path().display());
                 }
 
                 // Flush thread-local buffer to stdout (atomically)
@@ -134,13 +155,10 @@ fn run_build(args: Args) -> Result<()> {
     }
     // handle stdin vs file for build
     let input = args.input.first().cloned().unwrap();
-    let reader: Box<dyn bstr::io::BufReadExt> = if input == "-" {
-        Box::new(io::BufReader::with_capacity(BUFFERSIZE, io::stdin()))
+    let reader: Box<dyn BufReadExt> = if input == "-" {
+        Box::new(BufReader::with_capacity(BUFFERSIZE, io::stdin()))
     } else {
-        Box::new(io::BufReader::with_capacity(
-            BUFFERSIZE,
-            std::fs::File::open(input)?,
-        ))
+        Box::new(BufReader::with_capacity(BUFFERSIZE, File::open(input)?))
     };
 
     fstsed::build::build_fstsed(reader, &args.key.unwrap(), &args.fst, args.sorted)

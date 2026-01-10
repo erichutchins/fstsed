@@ -1,6 +1,6 @@
 [package]
 name = "fstsed"
-version = "0.5.0"                                                                
+version = "0.5.0"
 authors = ["Eric Hutchins"]
 description = "Find and replace/decorate text at scale using finite state transducers (fst)"
 homepage = "https://github.com/erichutchins/fstsed"
@@ -30,9 +30,7 @@ bstr = "1.12"
 camino = "1.1.6"
 clap = { version = "4.5.4", features = ["derive", "cargo", "wrap_help"] }
 fst = "0.4.7"
-grep-matcher = "0.1.8"
-grep-searcher = "0.1.16"
-grep-regex = "0.1.14"
+
 ignore = "0.4.25"
 itermore = { version = "0.7.1", default-features = false, features = [
     "array_chunks",

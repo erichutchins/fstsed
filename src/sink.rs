@@ -1,28 +1,25 @@
-//! Sink implementation for integrating `FstSed` with `grep-searcher`.
+//! Processing utilities for `FstSed` text transformation.
 //!
-//! This module provides [`FstSedSink`], which acts as the bridge between
-//! `grep-searcher` and `fstsed`. It receives lines from the searcher,
-//! processes them with the FST matcher, and writes results to a buffer.
+//! This module provides [`FstSedSink`], which handles the transformation of
+//! text lines using the FST matcher, writing results to a buffer.
 
 use std::io::{self, Write};
 
-use grep_searcher::{Searcher, Sink, SinkMatch};
 use termcolor::Buffer;
 
 use crate::fstsed::{FstCache, FstSed};
 use crate::jsonquotes::jsonquotes_range_iter;
 use crate::BUFFERSIZE;
 
-/// `FstSedSink` acts as the bridge between `grep-searcher` and `fstsed`.
+/// `FstSedSink` handles text transformation using `FstSed`.
 ///
-/// It receives lines from the searcher, processes them with fstsed,
-/// and writes the result to the provided buffer.
+/// It processes input lines, applies FST matching and template rendering,
+/// and writes the transformed output to the provided buffer.
 pub struct FstSedSink<'a, 'b> {
     fsed: &'a FstSed,
     cache: &'b mut FstCache,
     buf: &'b mut Buffer,
     only_matching: bool,
-    json: bool,
     /// Scratch buffer for JSON string handling.
     temp_buf: Vec<u8>,
 }
@@ -36,20 +33,17 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
     /// * `cache` - Mutable reference to the FST cache for reuse
     /// * `buf` - Mutable reference to the output buffer
     /// * `only_matching` - If true, only output matching portions
-    /// * `json` - If true, process input as JSON strings
     pub fn new(
         fsed: &'a FstSed,
         cache: &'b mut FstCache,
         buf: &'b mut Buffer,
         only_matching: bool,
-        json: bool,
     ) -> Self {
         Self {
             fsed,
             cache,
             buf,
             only_matching,
-            json,
             temp_buf: Vec::with_capacity(BUFFERSIZE),
         }
     }
@@ -60,7 +54,7 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
     ///
     /// Returns an error if writing to the output buffer fails.
     #[inline]
-    pub fn process_text(&mut self, input: &[u8]) -> Result<bool, io::Error> {
+    pub fn process_text(&mut self, input: &[u8]) -> Result<(), io::Error> {
         let mut lastpos: usize = 0;
         let mut matcher = self.fsed.find_iter(input, self.cache);
 
@@ -82,7 +76,7 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
             self.buf.write_all(&input[lastpos..])?;
         }
 
-        Ok(true)
+        Ok(())
     }
 
     /// Processes JSON input, searching within string values.
@@ -91,7 +85,7 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
     ///
     /// Returns an error if writing to the output buffer fails.
     #[inline]
-    pub fn process_json(&mut self, line: &[u8]) -> Result<bool, io::Error> {
+    pub fn process_json(&mut self, line: &[u8]) -> Result<(), io::Error> {
         let mut lastpos: usize = 0;
         for (start, end, has_esc) in jsonquotes_range_iter(line) {
             // print from last spot to new start
@@ -123,7 +117,7 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
         if !self.only_matching {
             self.buf.write_all(&line[lastpos..])?;
         }
-        Ok(true)
+        Ok(())
     }
 
     /// Processes content within a JSON string value.
@@ -152,18 +146,5 @@ impl<'a, 'b> FstSedSink<'a, 'b> {
 
         serde_json::to_writer(&mut self.buf, std::str::from_utf8(&self.temp_buf).unwrap())?;
         Ok(())
-    }
-}
-
-impl Sink for FstSedSink<'_, '_> {
-    type Error = io::Error;
-
-    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
-        let line = mat.bytes();
-        if self.json {
-            self.process_json(line)
-        } else {
-            self.process_text(line)
-        }
     }
 }

@@ -423,6 +423,7 @@ impl<'a> FstSed {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use camino::Utf8PathBuf;
 
     #[test]
     fn test_word_char() {
