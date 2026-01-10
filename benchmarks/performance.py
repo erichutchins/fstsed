@@ -12,33 +12,58 @@ import random
 import string
 import psutil
 
-def generate_random_word(length=8):
-    return ''.join(random.choices(string.ascii_lowercase, k=length))
+FLOG_PATH = os.path.expanduser("~/go/bin/flog")
 
-def create_corpus(path, size_mb, json_mode=False):
-    print(f"Generating {size_mb}MB {'JSON ' if json_mode else ''}corpus...")
-    with open(path, 'w') as f:
-        words = [generate_random_word() for _ in range(1000)]
-        total_bytes = 0
-        target_bytes = size_mb * 1024 * 1024
-        while total_bytes < target_bytes:
-            content = ' '.join(random.choices(words, k=20))
-            if json_mode:
-                line = json.dumps({"text": content}) + '\n'
-            else:
-                line = content + '\n'
-            f.write(line)
-            total_bytes += len(line)
-
-def create_fst_json(path, key_count):
-    print(f"Generating JSON for {key_count} keys...")
+def get_flog_keys(count):
+    print(f"Generating {count} realistic keys using flog...")
+    # Increase count slightly to account for potential duplicates
+    target_count = count if count < 10000 else count + (count // 10)
+    cmd = [FLOG_PATH, "-n", str(target_count), "-f", "json"]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
     keys = []
+    for line in proc.stdout.splitlines():
+        if not line: continue
+        try:
+            data = json.loads(line)
+            keys.append(data['host'])
+        except:
+            continue
+    unique_keys = []
+    seen = set()
+    for k in keys:
+        if k not in seen:
+            unique_keys.append(k)
+            seen.add(k)
+        if len(unique_keys) >= count:
+            break
+    return unique_keys
+
+def create_corpus(path, size_mb, all_keys, json_mode=False):
+    print(f"Generating {size_mb}MB {'JSON ' if json_mode else ''}corpus with flog...")
+    fmt = "json" if json_mode else "apache_combined"
+    cmd = [FLOG_PATH, "-b", str(size_mb * 1024 * 1024), "-f", fmt]
+    
     with open(path, 'w') as f:
-        for i in range(key_count):
-            key = f"word_{i}_{generate_random_word()}"
-            keys.append(key)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+        line_count = 0
+        for line in proc.stdout:
+            f.write(line)
+            line_count += 1
+            # Inject a positive match every 100 lines to ensure realistic hit rate (~1%)
+            if line_count % 100 == 0:
+                key = random.choice(all_keys)
+                if json_mode:
+                    inj = {"host": key, "user-identifier": "-", "datetime": "09/Jan/2026:18:38:39 -0500", "method": "GET", "request": "/injected", "protocol": "HTTP/1.1", "status": 200, "bytes": 123}
+                    f.write(json.dumps(inj) + "\n")
+                else:
+                    f.write(f"{key} - - [09/Jan/2026:18:41:47 -0500] \"GET /injected HTTP/1.1\" 200 123 \"-\" \"Antigravity/1.0\"\n")
+        proc.wait()
+
+def create_fst_json(path, keys):
+    print(f"Generating FST JSON for {len(keys)} keys...")
+    with open(path, 'w') as f:
+        for i, key in enumerate(keys):
             f.write(json.dumps({"key": key, "value": f"VAL_{i}"}) + '\n')
-    return keys
 
 def create_patterns_file(path, keys):
     with open(path, 'w') as f:
@@ -46,6 +71,7 @@ def create_patterns_file(path, keys):
             f.write(key + '\n')
 
 def run_bench(bin_path, fst_path, corpus_path):
+    corpus_size = os.path.getsize(corpus_path)
     start = time.time()
     process = subprocess.Popen(
         [bin_path, "-f", fst_path, corpus_path],
@@ -69,14 +95,16 @@ def run_bench(bin_path, fst_path, corpus_path):
 
     process.wait()
     end = time.time()
+    duration = end - start
     
     if process.returncode != 0:
         _, stderr = process.communicate()
         print(f"Error running bench: {stderr.decode()}")
         return None
-    return end - start, peak_rss
+    return duration, peak_rss, (corpus_size / 1024 / 1024) / duration
 
 def run_other_tool(cmd, corpus_path):
+    corpus_size = os.path.getsize(corpus_path)
     start = time.time()
     process = subprocess.Popen(
         cmd + [corpus_path],
@@ -100,7 +128,8 @@ def run_other_tool(cmd, corpus_path):
 
     process.wait()
     end = time.time()
-    return end - start, peak_rss
+    duration = end - start
+    return duration, peak_rss, (corpus_size / 1024 / 1024) / duration
 
 def main():
     bin_path = "./target/release/fstsed"
@@ -108,11 +137,14 @@ def main():
         print("Release binary not found. Please run 'cargo build --release'")
         return
 
+    # Generate keys pool
+    all_keys = get_flog_keys(100000)
+
     corpus_path = "bench_corpus.txt"
-    create_corpus(corpus_path, 10) # 10MB corpus
+    create_corpus(corpus_path, 100, all_keys) # 100MB corpus
 
     json_corpus_path = "bench_corpus.json"
-    create_corpus(json_corpus_path, 10, json_mode=True) # 10MB JSON corpus
+    create_corpus(json_corpus_path, 100, all_keys, json_mode=True) # 100MB JSON corpus
 
     key_counts = [10, 100, 1000, 10000, 100000]
     results = []
@@ -123,8 +155,9 @@ def main():
         fst_path = f"bench_{count}.fst"
         patterns_path = f"bench_{count}.txt"
         
-        keys = create_fst_json(json_path, count)
-        create_patterns_file(patterns_path, keys)
+        current_keys = all_keys[:count]
+        create_fst_json(json_path, current_keys)
+        create_patterns_file(patterns_path, current_keys)
         
         # Build FST
         subprocess.run([bin_path, "--build", "-f", fst_path, json_path], stdout=subprocess.DEVNULL)
@@ -135,45 +168,44 @@ def main():
         # fstsed
         res = run_bench(bin_path, fst_path, corpus_path)
         if res:
-            duration, mem = res
-            print(f"fstsed         | Time: {duration:.4f}s | Throughput: {10/duration:.2f} MB/s | Mem: {mem/1024/1024:.2f} MB")
-            results.append(("fstsed", count, duration, mem))
+            duration, mem, throughput = res
+            print(f"fstsed         | Time: {duration:.4f}s | Throughput: {throughput:.2f} MB/s | Mem: {mem/1024/1024:.2f} MB")
+            results.append(("fstsed", count, duration, throughput, mem))
 
         # fstsed --json
-        # Treat corpus as JSON strings line-by-line
         res = run_other_tool([bin_path, "-f", fst_path, "--json"], json_corpus_path)
         if res:
-            duration, mem = res
-            print(f"fstsed --json  | Time: {duration:.4f}s | Throughput: {10/duration:.2f} MB/s | Mem: {mem/1024/1024:.2f} MB")
-            results.append(("fstsed --json", count, duration, mem))
+            duration, mem, throughput = res
+            print(f"fstsed --json  | Time: {duration:.4f}s | Throughput: {throughput:.2f} MB/s | Mem: {mem/1024/1024:.2f} MB")
+            results.append(("fstsed --json", count, duration, throughput, mem))
 
         # ripgrep (fixed-string, word-boundary, passthru)
-        if count <= 10000:
+        if count <= 100000:
             res = run_other_tool(["rg", "-F", "-w", "-f", patterns_path, "--passthru"], corpus_path)
             if res:
-                duration, mem = res
-                print(f"rg -F -w       | Time: {duration:.4f}s | Throughput: {10/duration:.2f} MB/s | Mem: {mem/1024/1024:.2f} MB")
-                results.append(("rg -F -w", count, duration, mem))
+                duration, mem, throughput = res
+                print(f"rg -F -w       | Time: {duration:.4f}s | Throughput: {throughput:.2f} MB/s | Mem: {mem/1024/1024:.2f} MB")
+                results.append(("rg -F -w", count, duration, throughput, mem))
         else:
-            print("rg -F -w       | Skipped (> 10k keys)")
+            print("rg -F -w       | Skipped (> 100k keys)")
 
         # ripgrep (fixed-string, passthru)
-        if count <= 10000:
+        if count <= 100000:
             res = run_other_tool(["rg", "-F", "-f", patterns_path, "--passthru"], corpus_path)
             if res:
-                duration, mem = res
-                print(f"rg -F          | Time: {duration:.4f}s | Throughput: {10/duration:.2f} MB/s | Mem: {mem/1024/1024:.2f} MB")
-                results.append(("rg -F", count, duration, mem))
+                duration, mem, throughput = res
+                print(f"rg -F          | Time: {duration:.4f}s | Throughput: {throughput:.2f} MB/s | Mem: {mem/1024/1024:.2f} MB")
+                results.append(("rg -F", count, duration, throughput, mem))
         else:
-            print("rg -F          | Skipped (> 10k keys)")
+            print("rg -F          | Skipped (> 100k keys)")
 
         # grep (fixed-string, word-boundary)
-        if count <= 1000:
+        if count <= 100:
             res = run_other_tool(["grep", "-F", "-w", "-f", patterns_path], corpus_path)
             if res:
-                duration, mem = res
-                print(f"grep -F -w     | Time: {duration:.4f}s | Throughput: {10/duration:.2f} MB/s | Mem: {mem/1024/1024:.2f} MB")
-                results.append(("grep -F -w", count, duration, mem))
+                duration, mem, throughput = res
+                print(f"grep -F -w     | Time: {duration:.4f}s | Throughput: {throughput:.2f} MB/s | Mem: {mem/1024/1024:.2f} MB")
+                results.append(("grep -F -w", count, duration, throughput, mem))
         else:
             print("grep -F -w     | Skipped (> 1k keys)")
         
@@ -185,10 +217,20 @@ def main():
     os.remove(corpus_path)
     os.remove(json_corpus_path)
     
-    print("\nSummary (10MB Corpus):")
-    print("Tool\tKeys\tTime(s)\tThroughput(MB/s)\tPeak RSS(MB)")
-    for tool, count, duration, mem in results:
-        print(f"{tool:12}\t{count}\t{duration:.4f}\t{10/duration:.2f}\t{mem/1024/1024:.2f}")
+    print("\nSummary Table:")
+    print(f"{'Tool':15} | {'Keys':>7} | {'Time(s)':>8} | {'MB/s':>8} | {'RSS(MB)':>8} | {'vs Prev':>8}")
+    print("-" * 67)
+    
+    prev_durations = {}
+    
+    for tool, count, duration, throughput, mem in results:
+        diff_str = "-"
+        if tool in prev_durations:
+            ratio = duration / prev_durations[tool]
+            diff_str = f"{ratio:.2f}x"
+        prev_durations[tool] = duration
+        
+        print(f"{tool:15} | {count:7,d} | {duration:8.4f} | {throughput:8.2f} | {mem/1024/1024:8.2f} | {diff_str:>8}")
 
 if __name__ == "__main__":
     main()
