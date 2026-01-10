@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io;
 use std::str;
 
-const SENTINEL: u8 = 0;
+use crate::SENTINEL;
 
 pub fn build_fstsed<R>(
     mut input: R,

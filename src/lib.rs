@@ -3,7 +3,13 @@ pub mod cli;
 pub mod fstsed;
 pub mod jsonquotes;
 
+pub mod sink;
+
 pub const BUFFERSIZE: usize = 64 * 1024;
+
+/// Sentinel byte used to separate keys from values in the FST.
+/// This must be 0 to ensure proper lexicographic ordering.
+pub const SENTINEL: u8 = 0;
 
 /// Compile-time lookup table for ASCII word characters.
 /// Word chars are: a-z, A-Z, 0-9, _

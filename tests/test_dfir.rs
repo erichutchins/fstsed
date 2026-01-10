@@ -39,7 +39,8 @@ fn test_dfir_indicators() {
         fst_path.clone(),
         Some("{key} ({val})".to_string()),
         termcolor::ColorChoice::Never,
-    );
+    )
+    .unwrap();
 
     // 1. IP Address Tests
     let input1 = "check 8.8.8.8 for details";

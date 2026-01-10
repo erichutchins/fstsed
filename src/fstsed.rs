@@ -1,4 +1,4 @@
-use anyhow::{Error, Result};
+use anyhow::{Context as AnyhowContext, Error, Result};
 use camino::Utf8PathBuf;
 use fst::raw::Fst;
 use memmap2::Mmap;
@@ -8,10 +8,9 @@ use std::borrow::Cow;
 use std::fs::File;
 use termcolor::ColorChoice;
 
-const SENTINEL: u8 = 0;
 use bstr::ByteSlice;
 
-use crate::{is_word_byte, is_word_char};
+use crate::{is_word_byte, is_word_char, SENTINEL};
 
 /// FstMatch represents a single match of a fst key in a haystack
 /// with its corresponding value from the fst.
@@ -210,7 +209,29 @@ fn test_for_json_keys(template: &str) -> bool {
 }
 
 impl<'a> FstSed {
-    pub fn new(fstpath: Utf8PathBuf, user_template: Option<String>, color: ColorChoice) -> Self {
+    /// Creates a new `FstSed` instance from an FST file path.
+    ///
+    /// # Arguments
+    ///
+    /// * `fstpath` - Path to the FST database file
+    /// * `user_template` - Optional template string for rendering matches
+    /// * `color` - Color choice for output formatting
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The FST file cannot be opened
+    /// - The FST file is invalid or corrupted
+    ///
+    /// # Safety
+    ///
+    /// This function uses memory-mapped I/O internally. The caller must ensure
+    /// that the FST file is not modified while the `FstSed` instance is in use.
+    pub fn new(
+        fstpath: Utf8PathBuf,
+        user_template: Option<String>,
+        color: ColorChoice,
+    ) -> Result<Self, Error> {
         let mut template = user_template.unwrap_or_else(|| "<{key}|{value}>".to_string());
         let has_json_keys = test_for_json_keys(&template);
 
@@ -219,14 +240,17 @@ impl<'a> FstSed {
             template = format!("\x1b[1;31m{template}\x1b[0;0m");
         }
 
-        let fst = unsafe { mmap_fst(fstpath).expect("Error opening fst database") };
+        // SAFETY: Memory-mapped FST files must not be modified while in use.
+        // The caller is responsible for ensuring file stability.
+        let fst = unsafe { mmap_fst(fstpath.clone()) }
+            .with_context(|| format!("Failed to open FST database: {}", fstpath))?;
 
-        Self {
+        Ok(Self {
             fst,
             color,
             template,
             has_json_keys,
-        }
+        })
     }
 
     #[inline]
@@ -396,7 +420,7 @@ mod tests {
     fn test_fstsed_search() {
         let fst_path =
             create_test_fst("search", &[("foo", "bar"), ("baz", "qux"), ("京", "tokyo")]);
-        let fsed = FstSed::new(fst_path.clone(), None, ColorChoice::Never);
+        let fsed = FstSed::new(fst_path.clone(), None, ColorChoice::Never).unwrap();
 
         let haystack = "foo baz foobar 京 text".as_bytes();
         let mut cache = FstCache::new();
@@ -410,7 +434,7 @@ mod tests {
     #[test]
     fn test_fstsed_overlap_and_none() {
         let fst_path = create_test_fst("overlap", &[("apple", "A"), ("apple pie", "B")]);
-        let fsed = FstSed::new(fst_path.clone(), None, ColorChoice::Never);
+        let fsed = FstSed::new(fst_path.clone(), None, ColorChoice::Never).unwrap();
 
         let haystack = "apple apple pie applepie".as_bytes();
         let mut cache = FstCache::new();
