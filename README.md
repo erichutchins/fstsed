@@ -1,12 +1,13 @@
 # fstsed
 
-*Search and enrich/decorate strings at grep speed*
+_Search and enrich/decorate strings at grep speed_
 
 ## Concept
 
-Like [geoipsed](https://github.com/erichutchins/geoipsed) this tool enables in-line enrichment and decoration of text input. geoipsed uses a regular expression to isolate just the strings of interest (IP addresses), but **fstsed** can search for _any_ string. By precomputing a [`fst`](https://blog.burntsushi.net/transducers/) with searchterm and replacement pairs, **fstsed** can turn a database into an ad hoc sed tool.  
+Like [geoipsed](https://github.com/erichutchins/geoipsed) this tool enables in-line enrichment and decoration of text input. geoipsed uses a regular expression to isolate just the strings of interest (IP addresses), but **fstsed** can search for _any_ string. By precomputing a [`fst`](https://blog.burntsushi.net/transducers/) with searchterm and replacement pairs, **fstsed** can turn a database into an ad hoc sed tool.
 
 ## Features
+
 - Search for millions of strings simultaneously with O(1) scaling
 - Enrich, decorate, or replace search term with data of your choosing
 - Parallel search support (recursive directory walking, respects `.gitignore`)
@@ -18,13 +19,13 @@ Like [geoipsed](https://github.com/erichutchins/geoipsed) this tool enables in-l
 
 ## Use Cases
 
-Why would I use this? 
+Why would I use this?
 
-| Tool | Find | Enrich |
-| --- | --- | --- |
-| `grep -f searchterms.txt` | regex and fixed strings | no capability |
+| Tool                                            | Find                    | Enrich                                                                                                        |
+| ----------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `grep -f searchterms.txt`                       | regex and fixed strings | no capability                                                                                                 |
 | `rg -f searchterms.txt --replace "replacement"` | regex and fixed strings | one replacement string for all searchterms (although it can refer to named capture groups in search patterns) |
-| `fstsed` | fixed strings | replacement text **per search term** | 
+| `fstsed`                                        | fixed strings           | replacement text **per search term**                                                                          |
 
 When would I use this?
 
@@ -34,36 +35,38 @@ When would I use this?
 
 ## Performance
 
-One of the primary advantages of the FST approach is that search performance remains nearly constant regardless of whether you are searching for 10 strings or 100,000 strings.
+One of the primary advantages of the FST approach is that search performance is relatively constant regardless of whether you are searching for 10 strings or 100,000 strings.
 
-| Tool | Keys | Time (s) | Throughput (MB/s) | Peak RSS (MB) | vs Prev |
-|:---|:---|---:|---:|---:|---:|
-| fstsed | 10 | 0.4550 | 221.47 | 102.77 | - |
-| fstsed | 100 | 0.6565 | 153.48 | 43.59 | 1.44x |
-| fstsed | 1,000 | 0.7172 | 140.49 | 78.67 | 1.09x |
-| fstsed | 10,000 | 0.7946 | 126.81 | 71.73 | 1.11x |
-| fstsed | 100,000 | 1.2082 | 83.40 | 56.86 | 1.52x |
-| fstsed --json | 10 | 0.4856 | 208.05 | 104.41 | - |
-| fstsed --json | 100 | 0.6143 | 164.47 | 103.53 | 1.26x |
-| fstsed --json | 1,000 | 0.6572 | 153.73 | 66.47 | 1.07x |
-| fstsed --json | 10,000 | 0.7103 | 142.25 | 72.28 | 1.08x |
-| fstsed --json | 100,000 | 0.8623 | 117.18 | 75.88 | 1.21x |
-| rg -F -w | 10 | 0.1150 | 876.35 | 4.16 | - |
-| rg -F -w | 100 | 0.2344 | 429.94 | 5.31 | 2.04x |
-| rg -F -w | 1,000 | 0.2350 | 428.75 | 8.03 | 1.00x |
-| rg -F -w | 10,000 | 0.3781 | 266.52 | 40.62 | 1.61x |
-| rg -F -w | 100,000 | 1.2590 | 80.03 | 217.14 | 3.33x |
-| rg -F | 10 | 0.0696 | 1448.22 | 4.00 | - |
-| rg -F | 100 | 0.2285 | 440.98 | 4.25 | 3.28x |
-| rg -F | 1,000 | 0.2253 | 447.20 | 8.94 | 0.99x |
-| rg -F | 10,000 | 0.3744 | 269.16 | 13.50 | 1.66x |
-| rg -F | 100,000 | 0.5788 | 174.10 | 92.25 | 1.55x |
-| grep -F -w | 10 | 11.0159 | 9.15 | 1.67 | - |
-| grep -F -w | 100 | 103.9397 | 0.97 | 1.89 | 9.44x |
+| Tool          |   Keys | Time (s) | Throughput (MB/s) | Peak RSS (MB) | vs Prev |
+| :------------ | -----: | :------- | :---------------- | :------------ | :------ |
+| fstsed        |     10 | 0.4104   | 245.55            | 64.7          | -       |
+| fstsed        |    100 | 0.5773   | 174.55            | 47.08         | 1.41x   |
+| fstsed        |   1000 | 0.6984   | 144.27            | 47.83         | 1.21x   |
+| fstsed        |  10000 | 0.7561   | 133.27            | 77.86         | 1.08x   |
+| fstsed        | 100000 | 0.9174   | 109.84            | 81.56         | 1.21x   |
+| fstsed --json |     10 | 0.4373   | 231.03            | 103.86        | -       |
+| fstsed --json |    100 | 0.5665   | 178.36            | 102.88        | 1.30x   |
+| fstsed --json |   1000 | 0.6184   | 163.38            | 69.83         | 1.09x   |
+| fstsed --json |  10000 | 0.6456   | 156.51            | 104.88        | 1.04x   |
+| fstsed --json | 100000 | 0.7302   | 138.37            | 75.16         | 1.13x   |
+| grep -F -w    |     10 | 10.2984  | 9.78              | 1.7           | -       |
+| grep -F -w    |    100 | 101.9622 | 0.99              | 2.19          | 9.90x   |
+| grep -F -w    | 100000 | -        | -                 | -             | -       |
+| rg -F         |     10 | 0.0623   | 1617.23           | 4.17          | -       |
+| rg -F         |    100 | 0.2308   | 436.59            | 4.52          | 3.70x   |
+| rg -F         |   1000 | 0.2194   | 459.34            | 7.3           | 0.95x   |
+| rg -F         |  10000 | 0.372    | 270.89            | 13.12         | 1.70x   |
+| rg -F         | 100000 | 0.527    | 191.18            | 82.84         | 1.42x   |
+| rg -F -w      |     10 | 0.0766   | 1314.62           | 4.33          | -       |
+| rg -F -w      |    100 | 0.2249   | 447.99            | 5.3           | 2.93x   |
+| rg -F -w      |   1000 | 0.2369   | 425.38            | 7.75          | 1.05x   |
+| rg -F -w      |  10000 | 0.3183   | 316.6             | 38.8          | 1.34x   |
+| rg -F -w      | 100000 | 0.9796   | 102.86            | 263.81        | 3.08x   |
 
-*Results from 100MB realistic log corpus generated by [`flog`](https://github.com/mingrammer/flog) (including ~1% positive matches).*
+_Results from 100MB realistic log corpus generated by [`flog`](https://github.com/mingrammer/flog) (including ~1% positive matches)._
 
 ### Takeaways
+
 - `fstsed` performance is very stable, staying around 0.4s - 1.2s regardless of key count (10 to 100k).
 - `rg` starts extremely fast (~0.07s) but slows down as key counts increase (from ~1448 MB/s to ~80 MB/s for word boundaries).
 - `grep` scales linearly with key count and becomes unusable very quickly (~104s for just 100 keys).
@@ -71,33 +74,32 @@ One of the primary advantages of the FST approach is that search performance rem
 The JSON search mode is specifically optimized to avoid deserialization overhead for strings without escapes, allowing it to maintain high speeds across extremely large sets of indicators.
 
 You can replicate these results by running:
+
 ```bash
 uv run benchmarks/performance.py
 ```
 
 ### Note
+
 - **Smart Boundary Matching**: `fstsed` prevents partial matches within larger words. If a search term begins or ends with a word character (per Unicode), it must be bounded by a non-word character in the haystack. For example, `apple` will not match inside `pineapples`, but it **will** match in `apple.com` or `apple-store`.
 
 - **Build Warnings**: When building a database, `fstsed` will warn you about:
-    - **Shadowed Keys**: Identifies keys that are prefixes of longer keys (e.g. `abc` is a prefix of `abcde`). This is informational only; `abc` will still match when it appears on its own, but `abcde` will take precedence when the full longer sequence is found.
-    - **Boundary Risks**: Flags keys that start or end with non-word characters, as these may require specific tuning or may not behave as expected with standard word-boundary rules.
+  - **Shadowed Keys**: Identifies keys that are prefixes of longer keys (e.g. `abc` is a prefix of `abcde`). This is informational only; `abc` will still match when it appears on its own, but `abcde` will take precedence when the full longer sequence is found.
+  - **Boundary Risks**: Flags keys that start or end with non-word characters, as these may require specific tuning or may not behave as expected with standard word-boundary rules.
 - **Immutability**: FST files are immutable; any changes require rebuilding the database.
-
 
 ## Install
 
 ```
 # download and build fstsed
 git clone https://github.com/erichutchins/fstsed.git
-cd fstsed
-export RUSTFLAGS='-C target-cpu=native'
-cargo install 
+cargo install --path ./fstsed
 
-# optional, install fst bin to view fst databases
+# optional, install fst bin to inspect fst databases
 cargo install fst-bin
 ```
 
-## Usage 
+## Usage
 
 ```
 Usage: fstsed [OPTIONS] -f <FST> [PATH]...
@@ -150,6 +152,7 @@ Examples:
 Let's use Volexity's github repo as an example IOC database. I used a bit of python to convert multiple csvs into a single json file.
 
 1. **Get the data**
+
 ```
 git clone https://github.com/volexity/threat-intel.git
 
@@ -164,7 +167,7 @@ In [4]: def conv(csv):
    ...:     df = pd.read_csv(csv)
    ...:     df["path"] = csv
    ...:     return df.to_json(orient="records", lines=True)
-   ...: 
+   ...:
 In [5]: iocjson = "\n".join(map(conv, csvs))
 In [6]: with open("volexity.json", "w") as f:
    ...:     f.write(iocjson)
@@ -175,7 +178,7 @@ In [6]: with open("volexity.json", "w") as f:
 ```
 fstsed --build -f volexity.fst -k value volexity.json
 # or pipe in from stdin
-cat volexity.json | fstsed --build -f volexity.fst -k value 
+cat volexity.json | fstsed --build -f volexity.fst -k value
 ```
 
 3. **Now we can play**
@@ -183,7 +186,7 @@ cat volexity.json | fstsed --build -f volexity.fst -k value
 Basic find and replace but because we didn't specify a template, the replace value is the entire json record.
 
 ```
-echo "test of avsvmcloud.com metadata" | fstsed -f volexity.fst 
+echo "test of avsvmcloud.com metadata" | fstsed -f volexity.fst
 test of <avsvmcloud.com|{"value":"avsvmcloud.com","type":"hostname","notes":null,"path":"2020/2020-12-14 - DarkHalo Leverages SolarWinds Compromise to Breach Organizations/indicators/indicators.csv"}> metadata
 ```
 
@@ -212,5 +215,3 @@ Then, taking the lede from [BBC article](https://www.bbc.com/burmese/burma-57432
 > လနခဲ့တဲ့ ၅ နစက တပမတောကာကယရေးဦးစီးခုပ ရဲ့သကတမးဟာ အကန့အသတမရိတဲ့ သဘောဖစနေလို့ ၆၅ နစကန့သတပီးပငခဲ့တယလို့ **<ဗိုလခုပမူးကီး> (Senior General of Myanmar Army)** မငးအောငလိုငက ပောခဲ့ပီး သူ့အသက းကာ အဲ့ဒီ့ကန့သတခကကို ပယဖကလိုကတဲ့ အတက တပမတောကာကယရေးဦးစီးခုပသကတမးဟာ အကန့အသတမဲ့ ပနဖစသားပတယ။
 
 Even if I can't read any of the Burmese, I still know which key phrase matched, what that phrase means in my native tongue, and where generally the match occurred in the document.
-
-
