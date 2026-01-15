@@ -4,8 +4,8 @@
 //! randomly generated inputs.
 
 use camino::Utf8PathBuf;
-use fstsed::fstsed::{FstCache, FstSed};
-use fstsed::jsonquotes::jsonquotes_range_iter;
+use fstsed::engine::{FstCache, FstSed};
+use fstsed::json::jsonquotes_range_iter;
 use fstsed::{is_word_byte, is_word_char};
 use proptest::prelude::*;
 use std::fs::File;
@@ -140,7 +140,7 @@ proptest! {
         drop(file);
 
         let input = std::io::BufReader::new(File::open(&fst_path).unwrap());
-        fstsed::build::build_fstsed(input, "key", &fst_path, false).unwrap();
+        fstsed::builder::build_fstsed(input, "key", &fst_path, false).unwrap();
 
         // Search for the key
         let fsed = FstSed::new(&fst_path, None, ColorChoice::Never).unwrap();
@@ -176,7 +176,7 @@ proptest! {
         drop(file);
 
         let input = std::io::BufReader::new(File::open(&temp_json).unwrap());
-        fstsed::build::build_fstsed(input, "key", &fst_path, false).unwrap();
+        fstsed::builder::build_fstsed(input, "key", &fst_path, false).unwrap();
 
         // Search for absent_key
         let fsed = FstSed::new(&fst_path, None, ColorChoice::Never).unwrap();
@@ -213,7 +213,7 @@ proptest! {
         drop(file);
 
         let input = std::io::BufReader::new(File::open(&temp_json).unwrap());
-        fstsed::build::build_fstsed(input, "key", &fst_path, false).unwrap();
+        fstsed::builder::build_fstsed(input, "key", &fst_path, false).unwrap();
 
         // Search for key embedded in another word
         let fsed = FstSed::new(&fst_path, None, ColorChoice::Never).unwrap();
@@ -253,7 +253,7 @@ proptest! {
         drop(file);
 
         let input = std::io::BufReader::new(File::open(&temp_json).unwrap());
-        fstsed::build::build_fstsed(input, "key", &fst_path, false).unwrap();
+        fstsed::builder::build_fstsed(input, "key", &fst_path, false).unwrap();
 
         // Search for each key
         let fsed = FstSed::new(&fst_path, None, ColorChoice::Never).unwrap();
@@ -297,7 +297,7 @@ proptest! {
         drop(file);
 
         let input = std::io::BufReader::new(File::open(&temp_json).unwrap());
-        fstsed::build::build_fstsed(input, "key", &fst_path, false).unwrap();
+        fstsed::builder::build_fstsed(input, "key", &fst_path, false).unwrap();
 
         // Search empty input
         let fsed = FstSed::new(&fst_path, None, ColorChoice::Never).unwrap();
@@ -326,7 +326,7 @@ proptest! {
         drop(file);
 
         let input = std::io::BufReader::new(File::open(&temp_json).unwrap());
-        fstsed::build::build_fstsed(input, "key", &fst_path, false).unwrap();
+        fstsed::builder::build_fstsed(input, "key", &fst_path, false).unwrap();
 
         // Search with key at start
         let fsed = FstSed::new(&fst_path, None, ColorChoice::Never).unwrap();
@@ -356,7 +356,7 @@ proptest! {
         drop(file);
 
         let input = std::io::BufReader::new(File::open(&temp_json).unwrap());
-        fstsed::build::build_fstsed(input, "key", &fst_path, false).unwrap();
+        fstsed::builder::build_fstsed(input, "key", &fst_path, false).unwrap();
 
         // Search with key at end
         let fsed = FstSed::new(&fst_path, None, ColorChoice::Never).unwrap();

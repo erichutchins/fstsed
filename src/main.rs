@@ -3,7 +3,7 @@ use bstr::io::BufReadExt;
 use camino::Utf8PathBuf;
 use clap::Parser;
 use fstsed::cli::{Args, ArgsColorChoice};
-use fstsed::fstsed::{FstCache, FstSed};
+use fstsed::engine::{FstCache, FstSed};
 use fstsed::BUFFERSIZE;
 use ignore::{DirEntry, WalkBuilder};
 use std::fs::File;
@@ -177,6 +177,6 @@ fn run_build(args: Args) -> Result<()> {
         Box::new(BufReader::with_capacity(BUFFERSIZE, File::open(input)?))
     };
 
-    fstsed::build::build_fstsed(reader, &args.key.unwrap(), &args.fst, args.sorted)
+    fstsed::builder::build_fstsed(reader, &args.key.unwrap(), &args.fst, args.sorted)
         .map_err(|e| anyhow::anyhow!("{}", e))
 }

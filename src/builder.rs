@@ -13,7 +13,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::str;
 
-use crate::SENTINEL;
+use crate::util::{is_word_char, SENTINEL};
 
 /// Statistics collected during FST building.
 struct BuildStats {
@@ -198,10 +198,10 @@ fn detect_problematic_keys(entries: &[Entry], data_pool: &[u8]) {
 
         // Check for non-word character boundaries
         if let Some(first) = key1_str.chars().next() {
-            if !crate::is_word_char(first) {
+            if !is_word_char(first) {
                 nonword_keys.insert(key1_str.to_string());
             } else if let Some(last) = key1_str.chars().last() {
-                if !crate::is_word_char(last) {
+                if !is_word_char(last) {
                     nonword_keys.insert(key1_str.to_string());
                 }
             }

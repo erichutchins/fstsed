@@ -3,20 +3,19 @@
 //! This module provides the core [`FstSed`] type for performing efficient
 //! multi-pattern matching using Finite State Transducers.
 
-use crate::error::{FstSedError, Result};
+use crate::error::Result;
 use camino::Utf8Path;
 use fst::raw::Fst;
 use memmap2::Mmap;
 use microtemplate::{render, Context};
 use serde_json::Value;
 use std::borrow::Cow;
-use std::fs::File;
 use termcolor::ColorChoice;
 
 use bstr::ByteSlice;
 
-use crate::jsonquotes::jsonquotes_range_iter;
-use crate::{is_word_byte, is_word_char, BUFFERSIZE, SENTINEL};
+use crate::json::jsonquotes_range_iter;
+use crate::util::{is_word_byte, is_word_char, mmap_fst, BUFFERSIZE, SENTINEL};
 use bstr::io::BufReadExt;
 use std::io::{self, BufRead, Write};
 
@@ -238,23 +237,6 @@ pub struct FstSed {
     /// Lookup table for valid starting bytes. If `start_byte_table[b]` is false,
     /// byte `b` cannot be the first byte of any key in the FST.
     start_byte_table: [bool; 256],
-}
-
-/// Memory-maps an FST file from disk.
-///
-/// # Safety
-///
-/// The caller must ensure the file is not modified while the returned
-/// FST is in use. Modifying the underlying file while it's memory-mapped
-/// leads to undefined behavior.
-///
-/// Adapted from <https://github.com/BurntSushi/fst/blob/master/fst-bin/src/util.rs>
-#[inline]
-unsafe fn mmap_fst(path: &Utf8Path) -> Result<Fst<Mmap>> {
-    let mmap = Mmap::map(&File::open(path).map_err(FstSedError::FstMmap)?)
-        .map_err(FstSedError::FstMmap)?;
-    let fst = Fst::new(mmap).map_err(FstSedError::FstParse)?;
-    Ok(fst)
 }
 
 /// Determines if a template string requires JSON deserialization.

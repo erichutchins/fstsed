@@ -19,9 +19,9 @@ use fake::faker::lorem::en::Sentence;
 use fake::rand::rngs::StdRng;
 use fake::rand::{Rng, SeedableRng};
 use fake::Fake;
-use fstsed::build::build_fstsed;
-use fstsed::fstsed::{FstCache, FstSed};
-use fstsed::jsonquotes::jsonquotes_range_iter;
+use fstsed::builder::build_fstsed;
+use fstsed::engine::{FstCache, FstSed};
+use fstsed::json::jsonquotes_range_iter;
 use std::hint::black_box;
 use termcolor::ColorChoice;
 
