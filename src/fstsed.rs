@@ -157,21 +157,25 @@ impl Iterator for FstMatches<'_, '_, '_> {
 
         while self.pos < len {
             let start_pos = self.pos;
+            let current_byte = haystack[start_pos];
             self.pos += 1;
 
-            // Quick check: is this position a potential word start?
+            // FAST: Single array lookup (256 bytes easily fits in L1 cache).
+            // Reject bytes that can never be the start of any key in the FST.
+            // This eliminates ~90% of positions without any FST traversal.
+            if !self.fstsed.start_byte_table[current_byte as usize] {
+                continue;
+            }
+
+            // MEDIUM: Boundary check (only for bytes that could start a key).
             // A word can start here if:
             // 1. We're at position 0, OR
             // 2. The previous byte is not a word character
-            //
-            // We also only attempt FST matching if the current byte could
-            // be the start of a key (any byte is valid, FST will reject quickly)
-
             if !self.is_word_start_boundary(start_pos) {
                 continue;
             }
 
-            // Try to match at this position
+            // SLOW: Full FST walk (only for potential matches at word boundaries).
             if self
                 .fstsed
                 .longest_match_at(haystack, start_pos, self.cache)
@@ -231,6 +235,9 @@ pub struct FstSed {
     /// Template string for rendering matches.
     pub template: String,
     has_json_keys: bool,
+    /// Lookup table for valid starting bytes. If `start_byte_table[b]` is false,
+    /// byte `b` cannot be the first byte of any key in the FST.
+    start_byte_table: [bool; 256],
 }
 
 /// Memory-maps an FST file from disk.
@@ -298,11 +305,20 @@ impl<'a> FstSed {
         // The caller is responsible for ensuring file stability.
         let fst = unsafe { mmap_fst(fstpath) }?;
 
+        // Build the starting byte lookup table from the FST root node.
+        // This allows us to quickly reject bytes that can never start a key.
+        let mut start_byte_table = [false; 256];
+        let root = fst.root();
+        for trans in root.transitions() {
+            start_byte_table[trans.inp as usize] = true;
+        }
+
         Ok(Self {
             fst,
             color,
             template,
             has_json_keys,
+            start_byte_table,
         })
     }
 
