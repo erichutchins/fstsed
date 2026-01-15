@@ -42,7 +42,7 @@
 //! - [`fstsed::FstCache`] - Reusable buffers for search operations
 //! - [`fstsed::FstMatch`] - A single match with key, value, and template rendering
 //! - [`build::build_fstsed`] - Function to build FST databases from JSON input
-//! - [`sink::FstSedSink`] - Integration with `grep-searcher` for line-by-line processing
+
 //!
 //! ## Building an FST Database
 //!
@@ -62,7 +62,6 @@ pub mod cli;
 pub mod error;
 pub mod fstsed;
 pub mod jsonquotes;
-pub mod sink;
 
 /// Default buffer size for I/O operations (64 KiB).
 pub const BUFFERSIZE: usize = 64 * 1024;

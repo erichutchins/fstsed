@@ -15,7 +15,10 @@ use termcolor::ColorChoice;
 
 use bstr::ByteSlice;
 
-use crate::{is_word_byte, is_word_char, SENTINEL};
+use crate::jsonquotes::jsonquotes_range_iter;
+use crate::{is_word_byte, is_word_char, BUFFERSIZE, SENTINEL};
+use bstr::io::BufReadExt;
+use std::io::{self, BufRead, Write};
 
 /// Represents a single match of an FST key in a haystack
 /// with its corresponding value from the FST.
@@ -417,6 +420,142 @@ impl<'a> FstSed {
     #[inline]
     pub fn longest_match(&self, text: &'a [u8], cache: &mut FstCache) -> Option<usize> {
         self.longest_match_at(text, 0, cache)
+    }
+
+    /// Process a stream line-by-line, writing results to output.
+    ///
+    /// This mirrors aho-corasick's stream_replace_all pattern but
+    /// optimized for line-based text processing.
+    #[inline]
+    pub fn stream_find<R: BufRead, W: Write>(
+        &self,
+        reader: &mut R,
+        writer: &mut W,
+        cache: &mut FstCache,
+        only_matching: bool,
+        json_mode: bool,
+    ) -> io::Result<()> {
+        let mut json_buf = if json_mode {
+            Vec::with_capacity(BUFFERSIZE)
+        } else {
+            Vec::new()
+        };
+
+        reader.for_byte_line_with_terminator(|line| {
+            if json_mode {
+                self.process_json_line(line, writer, cache, &mut json_buf)?;
+            } else if only_matching {
+                self.process_matching_only(line, writer, cache)?;
+            } else {
+                self.process_text_line(line, writer, cache)?;
+            }
+            Ok(true)
+        })
+    }
+
+    /// Process a single text line, replacing matches.
+    #[inline]
+    fn process_text_line(
+        &self,
+        line: &[u8],
+        writer: &mut impl Write,
+        cache: &mut FstCache,
+    ) -> io::Result<()> {
+        let mut last_end = 0;
+        let mut matches = self.find_iter(line, cache);
+
+        while let Some(match_start) = matches.next() {
+            // Write text before match
+            writer.write_all(&line[last_end..match_start])?;
+
+            // Write replacement
+            let replacement = matches.get_match().render();
+            writer.write_all(replacement.as_bytes())?;
+
+            last_end = match_start + matches.get_match_len();
+        }
+
+        // Write remaining text
+        writer.write_all(&line[last_end..])?;
+        Ok(())
+    }
+
+    /// Process a line in matching-only mode.
+    #[inline]
+    fn process_matching_only(
+        &self,
+        line: &[u8],
+        writer: &mut impl Write,
+        cache: &mut FstCache,
+    ) -> io::Result<()> {
+        let mut matches = self.find_iter(line, cache);
+
+        while let Some(_) = matches.next() {
+            let replacement = matches.get_match().render();
+            writer.write_all(replacement.as_bytes())?;
+            writer.write_all(b"\n")?;
+        }
+        Ok(())
+    }
+
+    /// Process a JSON line.
+    #[inline]
+    fn process_json_line(
+        &self,
+        line: &[u8],
+        writer: &mut impl Write,
+        cache: &mut FstCache,
+        json_buf: &mut Vec<u8>,
+    ) -> io::Result<()> {
+        let mut lastpos: usize = 0;
+        for (start, end, has_esc) in jsonquotes_range_iter(line) {
+            // print from last spot to new start
+            writer.write_all(&line[lastpos..start])?;
+
+            // CONTENT: line[start+1..end-1]
+            let raw_content = &line[start + 1..end - 1];
+
+            if has_esc {
+                // SLOW PATH: Use Cow to avoid allocation if possible,
+                // though has_esc=true means we'll likely allocate once.
+                match serde_json::from_slice::<std::borrow::Cow<str>>(&line[start..end]) {
+                    Ok(s) => self.process_json_content(s.as_bytes(), writer, cache, json_buf)?,
+                    Err(_) => {
+                        writer.write_all(&line[start..end])?;
+                    }
+                }
+            } else {
+                // FAST PATH: No escapes to handle!
+                // We can run FST directly on the raw bytes from the line.
+                self.process_json_content(raw_content, writer, cache, json_buf)?;
+            }
+            lastpos = end;
+        }
+        writer.write_all(&line[lastpos..])?;
+        Ok(())
+    }
+
+    #[inline]
+    fn process_json_content(
+        &self,
+        input: &[u8],
+        writer: &mut impl Write,
+        cache: &mut FstCache,
+        json_buf: &mut Vec<u8>,
+    ) -> io::Result<()> {
+        json_buf.clear();
+        let mut inner_lastpos = 0;
+        let mut matcher = self.find_iter(input, cache);
+
+        while let Some(m) = matcher.next() {
+            json_buf.write_all(&input[inner_lastpos..m])?;
+            json_buf.write_all(matcher.get_match().render().as_bytes())?;
+            inner_lastpos = m + matcher.get_match_len();
+        }
+        json_buf.write_all(&input[inner_lastpos..])?;
+
+        serde_json::to_writer(writer, std::str::from_utf8(json_buf).unwrap())?;
+        Ok(())
     }
 }
 
