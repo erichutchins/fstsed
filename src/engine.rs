@@ -10,7 +10,7 @@ use memmap2::Mmap;
 use microtemplate::{render, Context};
 use serde_json::Value;
 use std::borrow::Cow;
-use termcolor::ColorChoice;
+use termcolor::{Color, ColorChoice, ColorSpec, WriteColor};
 
 use bstr::ByteSlice;
 
@@ -237,6 +237,8 @@ pub struct FstSed {
     /// Lookup table for valid starting bytes. If `start_byte_table[b]` is false,
     /// byte `b` cannot be the first byte of any key in the FST.
     start_byte_table: [bool; 256],
+    /// Color specification for highlighting matches.
+    color_spec: ColorSpec,
 }
 
 /// Determines if a template string requires JSON deserialization.
@@ -275,12 +277,12 @@ impl<'a> FstSed {
         color: ColorChoice,
     ) -> Result<Self> {
         let fstpath = fstpath.as_ref();
-        let mut template = user_template.unwrap_or_else(|| "<{key}|{value}>".to_string());
+        let template = user_template.unwrap_or_else(|| "<{key}|{value}>".to_string());
         let has_json_keys = test_for_json_keys(&template);
 
-        if color == ColorChoice::Always {
-            // if we are printing color, bookend the template with ansi red escapes
-            template = format!("\x1b[1;31m{template}\x1b[0;0m");
+        let mut color_spec = ColorSpec::new();
+        if color != ColorChoice::Never {
+            color_spec.set_fg(Some(Color::Red)).set_bold(true);
         }
 
         // SAFETY: Memory-mapped FST files must not be modified while in use.
@@ -301,6 +303,7 @@ impl<'a> FstSed {
             template,
             has_json_keys,
             start_byte_table,
+            color_spec,
         })
     }
 
@@ -425,7 +428,7 @@ impl<'a> FstSed {
     /// This mirrors aho-corasick's stream_replace_all pattern but
     /// optimized for line-based text processing.
     #[inline]
-    pub fn stream_find<R: BufRead, W: Write>(
+    pub fn stream_find<R: BufRead, W: WriteColor>(
         &self,
         reader: &mut R,
         writer: &mut W,
@@ -456,7 +459,7 @@ impl<'a> FstSed {
     fn process_text_line(
         &self,
         line: &[u8],
-        writer: &mut impl Write,
+        writer: &mut impl WriteColor,
         cache: &mut FstCache,
     ) -> io::Result<()> {
         let mut last_end = 0;
@@ -468,7 +471,9 @@ impl<'a> FstSed {
 
             // Write replacement
             let replacement = matches.get_match().render();
+            writer.set_color(&self.color_spec)?;
             writer.write_all(replacement.as_bytes())?;
+            writer.reset()?;
 
             last_end = match_start + matches.get_match_len();
         }
@@ -483,14 +488,16 @@ impl<'a> FstSed {
     fn process_matching_only(
         &self,
         line: &[u8],
-        writer: &mut impl Write,
+        writer: &mut impl WriteColor,
         cache: &mut FstCache,
     ) -> io::Result<()> {
         let mut matches = self.find_iter(line, cache);
 
         while let Some(_) = matches.next() {
             let replacement = matches.get_match().render();
+            writer.set_color(&self.color_spec)?;
             writer.write_all(replacement.as_bytes())?;
+            writer.reset()?;
             writer.write_all(b"\n")?;
         }
         Ok(())
@@ -501,7 +508,7 @@ impl<'a> FstSed {
     fn process_json_line(
         &self,
         line: &[u8],
-        writer: &mut impl Write,
+        writer: &mut impl WriteColor,
         cache: &mut FstCache,
         json_buf: &mut Vec<u8>,
     ) -> io::Result<()> {
@@ -537,23 +544,51 @@ impl<'a> FstSed {
     fn process_json_content(
         &self,
         input: &[u8],
-        writer: &mut impl Write,
+        writer: &mut impl WriteColor,
         cache: &mut FstCache,
         json_buf: &mut Vec<u8>,
     ) -> io::Result<()> {
-        json_buf.clear();
-        let mut inner_lastpos = 0;
+        writer.write_all(b"\"")?; // Opening quote
+
+        let mut last_end = 0;
         let mut matcher = self.find_iter(input, cache);
 
         while let Some(m) = matcher.next() {
-            json_buf.write_all(&input[inner_lastpos..m])?;
-            json_buf.write_all(matcher.get_match().render().as_bytes())?;
-            inner_lastpos = m + matcher.get_match_len();
-        }
-        json_buf.write_all(&input[inner_lastpos..])?;
+            // Text before match
+            self.write_json_str_fragment(writer, &input[last_end..m], json_buf)?;
 
-        serde_json::to_writer(writer, std::str::from_utf8(json_buf).unwrap())?;
+            // The match
+            let replacement = matcher.get_match().render();
+            writer.set_color(&self.color_spec)?;
+            self.write_json_str_fragment(writer, replacement.as_bytes(), json_buf)?;
+            writer.reset()?;
+
+            last_end = m + matcher.get_match_len();
+        }
+
+        // Remaining text
+        self.write_json_str_fragment(writer, &input[last_end..], json_buf)?;
+        writer.write_all(b"\"")?; // Closing quote
         Ok(())
+    }
+
+    /// Writes a byte slice to the writer, escaping it for use inside a JSON string.
+    /// Reuses json_buf to avoid allocations.
+    fn write_json_str_fragment(
+        &self,
+        writer: &mut impl Write,
+        chunk: &[u8],
+        json_buf: &mut Vec<u8>,
+    ) -> io::Result<()> {
+        if chunk.is_empty() {
+            return Ok(());
+        }
+        let s = String::from_utf8_lossy(chunk);
+        json_buf.clear();
+        serde_json::to_writer(&mut *json_buf, &s)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        // Trim the leading and trailing quotes added by to_writer
+        writer.write_all(&json_buf[1..json_buf.len() - 1])
     }
 }
 
@@ -627,6 +662,33 @@ mod tests {
         let matches: Vec<usize> = fsed.find_iter(haystack, &mut cache).collect();
 
         assert_eq!(matches, vec![0, 4, 15]);
+
+        let _ = std::fs::remove_file(fst_path);
+    }
+
+    #[test]
+    fn test_fstsed_json_color() {
+        let fst_path = create_test_fst("json_color", &[("foo", "bar")]);
+        // Use Always to ensure color spec is applied
+        let fsed = FstSed::new(&fst_path, None, ColorChoice::Always).unwrap();
+
+        let haystack = "{\"msg\": \"hello foo world\"}".as_bytes();
+        let mut cache = FstCache::new();
+
+        // Use Ansi wrapper to capture raw escapes for inspection
+        use termcolor::Ansi;
+        let mut out = Ansi::new(vec![]);
+
+        fsed.stream_find(&mut &haystack[..], &mut out, &mut cache, false, true)
+            .unwrap();
+
+        let result = String::from_utf8(out.into_inner()).unwrap();
+        // The result should contain the raw ANSI red escape code
+        // and NOT the escaped version "\\u001b"
+        assert!(result.contains("\x1b[31m"));
+        assert!(result.contains("\x1b[1m"));
+        assert!(result.contains("<foo|bar>"));
+        assert!(result.contains("\x1b[0m"));
 
         let _ = std::fs::remove_file(fst_path);
     }

@@ -26,8 +26,22 @@ pub struct Args {
     #[clap(short, long)]
     pub only_matching: bool,
 
-    /// Use markers to highlight the matching strings
-    #[clap(short = 'C', long, value_enum, default_value_t = ArgsColorChoice::Auto)]
+    /// This flag controls when to use colors to highlight matched (non-empty) strings and the rendered template.
+    ///
+    /// fstsed will suppress color output by default in some other
+    /// circumstances as well. These include, but are not limited to:
+    ///
+    /// • When the NO_COLOR environment variable is set (regardless of value).
+    #[clap(
+        long,
+        alias = "colour",
+        value_enum,
+        num_args = 0..=1,
+        default_value_t = ArgsColorChoice::Auto,
+        default_missing_value = "always",
+        value_name = "WHEN",
+        verbatim_doc_comment
+    )]
     pub color: ArgsColorChoice,
 
     /// Specify fst db to use in search or to create in build mode
@@ -57,7 +71,7 @@ pub struct Args {
     #[clap(short, long)]
     pub template: Option<String>,
 
-    /// Json search mode. Fstsed will treat input as json, searching only inside quoted json strings.
+    /// Json search mode. Fstsed will treat input as json, searching only inside quoted strings.
     /// All strings are deserialized/decoded before json before searching, and all template
     /// decorations are properly json-encoded in the output for subsequent processing
     #[clap(short, long)]
@@ -76,14 +90,17 @@ pub struct Args {
     #[clap(short = 'u', long)]
     pub no_ignore: bool,
 
-    /// Search hidden files and directories.
+    /// For recursive directory scanning, search hidden files and directories.
     #[clap(long)]
     pub hidden: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
 pub enum ArgsColorChoice {
+    /// Always use color highlighting.
     Always,
+    /// Never use color highlighting.
     Never,
+    /// Use color highlighting only when writing to a terminal (default).
     Auto,
 }

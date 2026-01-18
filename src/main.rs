@@ -7,7 +7,7 @@ use fstsed::engine::{FstCache, FstSed};
 use fstsed::BUFFERSIZE;
 use ignore::{DirEntry, WalkBuilder};
 use std::fs::File;
-use std::io::{self, BufReader, IsTerminal};
+use std::io::{self, BufReader};
 use std::path::Path;
 use std::sync::Arc;
 use termcolor::{BufferWriter, ColorChoice};
@@ -50,13 +50,7 @@ fn main() -> Result<()> {
 
 fn determine_color_mode(args: &Args) -> ColorChoice {
     match args.color {
-        ArgsColorChoice::Auto => {
-            if std::io::stdout().is_terminal() {
-                ColorChoice::Always
-            } else {
-                ColorChoice::Never
-            }
-        }
+        ArgsColorChoice::Auto => ColorChoice::Auto,
         ArgsColorChoice::Always => ColorChoice::Always,
         ArgsColorChoice::Never => ColorChoice::Never,
     }
