@@ -61,6 +61,7 @@ fn test_recursive_directory_walk() {
     let output = Command::new(&bin)
         .arg("-f")
         .arg(&fst_path)
+        .arg("--color=never")
         .arg("--template")
         .arg("<{key}|{/value}>")
         .arg(&root_dir)
