@@ -585,8 +585,7 @@ impl<'a> FstSed {
         }
         let s = String::from_utf8_lossy(chunk);
         json_buf.clear();
-        serde_json::to_writer(&mut *json_buf, &s)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        serde_json::to_writer(&mut *json_buf, &s).map_err(io::Error::other)?;
         // Trim the leading and trailing quotes added by to_writer
         writer.write_all(&json_buf[1..json_buf.len() - 1])
     }
