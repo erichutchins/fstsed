@@ -92,9 +92,8 @@ where
                     return Ok(true);
                 }
             }
-            // This expect is acceptable here because FST insertion should only fail
-            // if keys are not in sorted order, which indicates corrupted input data.
-            set.insert(&tuple).expect("error building fstsed database");
+            set.insert(&tuple)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
             last_line = Some(tuple);
         } else {
             stats.num_errors += 1;

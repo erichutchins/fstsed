@@ -46,6 +46,9 @@ impl Template {
             "{value}" => Self::ValueOnly,
             _ => {
                 let mut parts = Vec::new();
+                // SAFETY: Byte-level parsing is safe here because `{` (0x7B) and `}` (0x7D)
+                // are ASCII characters that can never appear as UTF-8 continuation bytes.
+                // UTF-8 continuation bytes always have the high bit pattern 10xxxxxx (0x80-0xBF).
                 let input_bytes = input.as_bytes();
                 let mut last_index = 0;
                 let mut i = 0;

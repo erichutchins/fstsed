@@ -22,7 +22,7 @@ use fake::Fake;
 use fstsed::builder::build_fstsed;
 use fstsed::engine::{FstCache, FstMatch, FstSed};
 use fstsed::json::jsonquotes_range_iter;
-use fstsed::template::{Template, TemplatePart};
+use fstsed::template::Template;
 use std::borrow::Cow;
 use std::hint::black_box;
 use termcolor::ColorChoice;

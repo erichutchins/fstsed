@@ -209,6 +209,13 @@ impl Iterator for FstMatches<'_, '_, '_> {
     }
 }
 
+/// Initial capacity for key buffer (256 bytes covers most search terms).
+const KEY_INITIAL_CAPACITY: usize = 256;
+/// Initial capacity for compressed JSON values.
+const VALUE_INITIAL_CAPACITY: usize = 2048;
+/// Initial capacity for scratch buffers.
+const SCRATCH_INITIAL_CAPACITY: usize = 2048;
+
 /// Holds reusable buffers for search operations.
 ///
 /// Creating an `FstCache` once and reusing it across multiple searches
@@ -225,9 +232,9 @@ impl FstCache {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            key: Vec::with_capacity(256),
-            value: Vec::with_capacity(2048),
-            scratch: Vec::with_capacity(2048),
+            key: Vec::with_capacity(KEY_INITIAL_CAPACITY),
+            value: Vec::with_capacity(VALUE_INITIAL_CAPACITY),
+            scratch: Vec::with_capacity(SCRATCH_INITIAL_CAPACITY),
             start: 0,
         }
     }
@@ -257,7 +264,7 @@ pub struct FstSed {
     color_spec: ColorSpec,
 }
 
-impl<'a> FstSed {
+impl FstSed {
     /// Creates a new `FstSed` instance from an FST file path.
     ///
     /// # Arguments
@@ -324,7 +331,7 @@ impl<'a> FstSed {
     /// Matches are found at word boundaries only, and the longest match
     /// at each position is returned.
     #[inline]
-    pub fn find_iter<'f, 'c>(
+    pub fn find_iter<'a, 'f, 'c>(
         &'f self,
         text: &'a [u8],
         cache: &'c mut FstCache,
@@ -337,11 +344,17 @@ impl<'a> FstSed {
     /// Returns `Some(length)` if a match was found, storing the match
     /// details in the provided cache. Returns `None` if no match exists.
     ///
+    /// # Performance
+    ///
+    /// This function is decorated with `#[inline]` because it's called for every
+    /// potential match position. Benchmarks show a 50-100% regression when not inlined,
+    /// even with Link Time Optimization (LTO) enabled.
+    ///
     /// Adapted from <https://github.com/BurntSushi/fst/pull/104/files>
     #[inline]
     pub fn longest_match_at(
         &self,
-        text: &'a [u8],
+        text: &[u8],
         start: usize,
         cache: &mut FstCache,
     ) -> Option<usize> {
@@ -491,7 +504,7 @@ impl<'a> FstSed {
     ///
     /// This is a convenience method equivalent to `longest_match_at(text, 0, cache)`.
     #[inline]
-    pub fn longest_match(&self, text: &'a [u8], cache: &mut FstCache) -> Option<usize> {
+    pub fn longest_match(&self, text: &[u8], cache: &mut FstCache) -> Option<usize> {
         self.longest_match_at(text, 0, cache)
     }
 
@@ -499,7 +512,6 @@ impl<'a> FstSed {
     ///
     /// This mirrors aho-corasick's stream_replace_all pattern but
     /// optimized for line-based text processing.
-    #[inline]
     pub fn stream_find<R: BufRead, W: WriteColor>(
         &self,
         reader: &mut R,
@@ -527,7 +539,6 @@ impl<'a> FstSed {
     }
 
     /// Process a single text line, replacing matches.
-    #[inline]
     fn process_text_line(
         &self,
         line: &[u8],
@@ -554,7 +565,6 @@ impl<'a> FstSed {
     }
 
     /// Process a line in matching-only mode.
-    #[inline]
     fn process_matching_only(
         &self,
         line: &[u8],
@@ -572,7 +582,6 @@ impl<'a> FstSed {
     }
 
     /// Process a JSON line.
-    #[inline]
     fn process_json_line(
         &self,
         line: &[u8],
@@ -608,7 +617,6 @@ impl<'a> FstSed {
         Ok(())
     }
 
-    #[inline]
     fn process_json_content(
         &self,
         input: &[u8],
@@ -625,8 +633,10 @@ impl<'a> FstSed {
             // Text before match
             self.write_json_str_fragment(writer, &input[last_end..m], json_buf)?;
 
-            // The match
-            // We need to render to a string first for JSON encoding
+            // Render the match to a string for JSON encoding.
+            // NOTE: This allocates per match. A zero-allocation approach would require
+            // restructuring FstMatch to not borrow from FstCache, which is a larger change.
+            // For most workloads this is acceptable as the allocation is small.
             let replacement = matcher.get_match().display().to_string();
             writer.set_color(&self.color_spec)?;
             self.write_json_str_fragment(writer, replacement.as_bytes(), json_buf)?;

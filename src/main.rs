@@ -29,8 +29,7 @@ fn main() -> Result<()> {
 
     // Initialize FstSed and wrap in Arc for sharing across threads
     let fsed = Arc::new(
-        FstSed::new(&args.fst, args.template.clone(), colormode)
-            .map_err(|e| anyhow::anyhow!("{}", e))?,
+        FstSed::new(&args.fst, args.template.clone(), colormode).map_err(anyhow::Error::from)?,
     );
 
     // For stdout output
@@ -172,5 +171,5 @@ fn run_build(args: Args) -> Result<()> {
     };
 
     fstsed::builder::build_fstsed(reader, &args.key.unwrap(), &args.fst, args.sorted)
-        .map_err(|e| anyhow::anyhow!("{}", e))
+        .map_err(anyhow::Error::from)
 }
