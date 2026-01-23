@@ -4,11 +4,12 @@
 //! multi-pattern matching using Finite State Transducers.
 
 use crate::error::Result;
-use crate::template::{render_fmt, Context};
+use crate::template::{Context, Template, TemplatePart};
 use camino::Utf8Path;
 use fst::raw::Fst;
 use memmap2::Mmap;
 use serde_json::Value;
+
 use std::borrow::Cow;
 use termcolor::{Color, ColorChoice, ColorSpec, WriteColor};
 
@@ -24,7 +25,7 @@ use std::io::{self, BufRead, Write};
 pub struct FstMatch<'a> {
     key: Cow<'a, str>,
     value: Cow<'a, str>,
-    template: &'a str,
+    template: &'a Template,
     jsonvalue: Option<Value>,
 }
 
@@ -32,21 +33,14 @@ impl FstMatch<'_> {
     /// Returns a displayable object that renders the match.
     ///
     /// This uses `std::fmt::from_fn` to allow rendering directly to a formatter
-    /// without intermediate allocation.
+    /// without intermediate allocation (new in Rust v1.93).
     #[must_use]
     pub fn display(&self) -> impl std::fmt::Display + '_ {
-        std::fmt::from_fn(move |f| {
-            // fast path for default template
-            if self.template == "<{key}|{value}>" {
-                write!(f, "<{}|{}>", self.key, self.value)
-            } else {
-                render_fmt(self.template, self, f)
-            }
-        })
+        std::fmt::from_fn(move |f| self.template.render(self, f))
     }
 }
 
-impl Context for &FstMatch<'_> {
+impl Context for FstMatch<'_> {
     fn get_field(&self, field_name: &str) -> &str {
         match field_name {
             "key" => self.key.as_ref(),
@@ -238,25 +232,14 @@ pub struct FstSed {
     fst: Fst<Mmap>,
     /// Color choice for output formatting.
     pub color: ColorChoice,
-    /// Template string for rendering matches.
-    pub template: String,
+    /// Pre-parsed template for rendering matches.
+    pub template: Template,
     has_json_keys: bool,
     /// Lookup table for valid starting bytes. If `start_byte_table[b]` is false,
     /// byte `b` cannot be the first byte of any key in the FST.
     start_byte_table: [bool; 256],
     /// Color specification for highlighting matches.
     color_spec: ColorSpec,
-}
-
-/// Determines if a template string requires JSON deserialization.
-///
-/// Returns `true` if the template contains template variables beyond
-/// `{key}` and `{value}`, indicating that JSON field access is needed.
-fn test_for_json_keys(template: &str) -> bool {
-    template
-        .split('{')
-        .skip(1)
-        .any(|c| !(c.starts_with("key}") || c.starts_with("value}")))
 }
 
 impl<'a> FstSed {
@@ -284,8 +267,15 @@ impl<'a> FstSed {
         color: ColorChoice,
     ) -> Result<Self> {
         let fstpath = fstpath.as_ref();
-        let template = user_template.unwrap_or_else(|| "<{key}|{value}>".to_string());
-        let has_json_keys = test_for_json_keys(&template);
+        let template = Template::parse(user_template.as_deref().unwrap_or(Template::DEFAULT));
+
+        let has_json_keys = match &template {
+            Template::Standard | Template::KeyOnly | Template::ValueOnly => false,
+            Template::Custom(parts) => parts.iter().any(|part| match part {
+                TemplatePart::Variable(v) => v != "key" && v != "value",
+                _ => false,
+            }),
+        };
 
         let mut color_spec = ColorSpec::new();
         if color != ColorChoice::Never {
@@ -675,10 +665,40 @@ mod tests {
 
     #[test]
     fn test_json_keys_check() {
-        assert!(!test_for_json_keys("<{key}|{value}>"));
-        assert!(test_for_json_keys("<{key}|{value}|{other}>"));
-        assert!(test_for_json_keys("{/path/to/json}"));
-        assert!(!test_for_json_keys("pure text"));
+        let fst_path = create_test_fst("json_keys", &[("foo", "bar")]);
+
+        // Standard template
+        let fsed = FstSed::new(&fst_path, None, ColorChoice::Never).unwrap();
+        assert!(!fsed.has_json_keys);
+
+        // Custom template with just key/value
+        let fsed = FstSed::new(
+            &fst_path,
+            Some("{key} and {value}".to_string()),
+            ColorChoice::Never,
+        )
+        .unwrap();
+        assert!(!fsed.has_json_keys);
+
+        // Custom template with extra keys
+        let fsed = FstSed::new(
+            &fst_path,
+            Some("{key} and {other}".to_string()),
+            ColorChoice::Never,
+        )
+        .unwrap();
+        assert!(fsed.has_json_keys);
+
+        // JSON pointer
+        let fsed = FstSed::new(
+            &fst_path,
+            Some("{/path/to/data}".to_string()),
+            ColorChoice::Never,
+        )
+        .unwrap();
+        assert!(fsed.has_json_keys);
+
+        let _ = std::fs::remove_file(fst_path);
     }
 
     fn create_test_fst(name: &str, pairs: &[(&str, &str)]) -> Utf8PathBuf {
