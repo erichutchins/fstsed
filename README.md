@@ -1,9 +1,9 @@
 # fstsed
 
-> Search **and enrich** at near-ripgrep speed
+Search **and enrich** at near-ripgrep speed
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.93%2B-orange.svg)](https://www.rust-lang.org)
 
 **fstsed** is a high-performance search-and-enrichment tool for cases where every match needs its own context. It's not a faster ripgrep -- instead, fstsed brings ripgrep-class performance to a different problem:
 
@@ -11,7 +11,7 @@
 
 fstsed is built on [BurntSushi's `fst` crate](https://github.com/BurntSushi/fst) and is inspired by the blog post _[Index 1,600,000,000 Keys with Automata and Rust](https://burntsushi.net/transducers/)_ and of course [ripgrep](https://github.com/BurntSushi/ripgrep) itself.
 
-My other tool, [**geoipsed**](https://github.com/erichutchins/geoipsed), uses regexes to match just IP addresses and enrich with just the metadata from vendors MaxMind and Spur. On the other hand, Fstsed is completely flexible, allowing you to match any string and bundle any metadata you want.
+My other tool, [**geoipsed**](https://github.com/erichutchins/geoipsed), uses regexes to match only IP addresses and enrich with only the metadata from vendors MaxMind and Spur. In contrast, **fstsed** is completely flexible, allowing you to match any string and bundle any metadata you want.
 
 ---
 
@@ -39,7 +39,7 @@ When investigating logs, reports, or documents, raw matches are never enough. Yo
 
 ```text
 2024-01-10 14:23:45 Connection established to 192.168.1.105
-2024-01-10 14:23:51 DNS query: attacker-c2.com
+2024-01-10 14:23:51 DNS query: flowersbyirene.com
 2024-01-10 14:24:02 HTTP request to suspicious-domain.net
 ```
 
@@ -47,8 +47,8 @@ When investigating logs, reports, or documents, raw matches are never enough. Yo
 
 ```text
 2024-01-10 14:23:45 Connection established to 192.168.1.105 (High-priority APT indicator, last seen: Jan 8)
-2024-01-10 14:23:51 DNS query: attacker-c2.com (Attributed to APT99, confidence: high)
-2024-01-10 14:24:02 HTTP request to suspicious-domain.net (Phishing infrastructure, C2 callback)
+2024-01-10 14:23:51 DNS query: flowersbyirene.com (Attributed to APT99, confidence: high)
+2024-01-10 14:24:02 HTTP request to suspicious-domain.net (Phishing infrastructure)
 ```
 
 Inline enrichment eliminates context switching. You read enriched output directly, even when working with **tens or hundreds of thousands of indicators**.
@@ -57,14 +57,11 @@ Inline enrichment eliminates context switching. You read enriched output directl
 
 ## Use Cases
 
-| Tool                                            | Find                    | Enrich                                                                                                        | Scale                    |
-| ----------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| `grep -f searchterms.txt`                       | regex and fixed strings | no capability                                                                                                 | Linear with keys         |
-| `rg -f searchterms.txt --replace "replacement"` | regex and fixed strings | one replacement string for all searchterms (although it can refer to named capture groups in search patterns) | Search optimized         |
-| `fstsed -f searchterms.fst`                     | fixed strings           | replacement text **per search term**                                                                          | Constant time complexity |
-
-**Key idea:**  
-Each search term carries a metadata object. Matches don't just "hit"—they _render themselves_ using templates you define.
+| Tool | Patterns | Enrichment | Scaling |
+| :--- | :--- | :--- | :--- |
+| `grep -f searchterms.txt` | Regex and fixed strings | No capability | Linear with keys |
+| `rg -f searchterms.txt --replace "replacement"` | Regex and fixed strings | One replacement string for all searchterms (although that replacement string can include [named capture groups](https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md#replacements) from the regex search) | Search optimized |
+| `fstsed -f searchterms.fst` | Fixed strings | Replacement text **per search term** | Constant time complexity |
 
 fstsed trades a small amount of raw speed (vs pure ripgrep) to gain **rich, structured, per-indicator context**.
 
@@ -73,10 +70,10 @@ fstsed trades a small amount of raw speed (vs pure ripgrep) to gain **rich, stru
 ## Key Features
 
 - **Per-indicator metadata**  
-  Each search term stores a full JSON object (actor, severity, campaign, remediation, etc.)
+  Each search term has a full JSON object of metadata
 
 - **Template-driven output**  
-  Use `--template` to select exactly which fields appear in output
+  Use `--template` to control which fields from the JSON metadata object appear in output
 
 - **Predictable performance at scale**  
   Search time remains stable from 10 to 100,000+ indicators
@@ -97,7 +94,7 @@ fstsed trades a small amount of raw speed (vs pure ripgrep) to gain **rich, stru
 
 ## Quick Start
 
-> Build once, reuse everywhere.
+Build once, reuse everywhere.
 
 ```bash
 # Build an FST database from JSON threat intelligence.
@@ -373,7 +370,7 @@ echo '{"key":"ဗိုလ်ချုပ်မှူးကြီး","translate
 fstsed -f myanmar.fst article.txt --template "<{key}> ({translated})"
 ```
 
-Then, taking the lede from a [BBC article](https://www.bbc.com/burmese/burma-57432310) as a test case, output shows matched terms with inline translations:
+Then, taking the lede from a [BBC article](https://www.bbc.com/burmese/burma-57432310) as a test case, the output shows matched terms with inline translations:
 
 ```bash
 fstsed -f myanmar.fst bbc.txt --template "<{key}> ({translated})"
@@ -403,12 +400,6 @@ Even if I can't read any of the Burmese, I still know which key phrase matched, 
 - You don't need per-match metadata
 - You need regex or capture group substitution
 
-**Use sed/awk when:**
-
-- You need complex text transformations
-- You need stateful processing
-- You need full scripting capabilities
-
 ---
 
 <details>
@@ -420,19 +411,13 @@ Even if I can't read any of the Burmese, I still know which key phrase matched, 
 > fstsed is optimized for literal string matching with rich metadata. The following constraints are by design.
 
 - **Word boundaries only**  
-  Matches must start and end at word boundaries. `apple` won't match inside `pineapple`.
+  Matches must start and end at word boundaries. `apple` won't match inside `pineapple` or even in `apples`.
 
 - **Literal strings only**  
   Patterns are exact strings, not regular expressions. Use ripgrep for regex needs.
 
-- **No capture groups**  
-  Use templates for output formatting instead of capture group substitution.
-
 - **Immutable databases**  
   FST databases cannot be updated incrementally. Any changes require a full rebuild.
-
-- **Memory-mapped FST**  
-  The FST is memory-mapped, so very large databases may require adequate virtual memory.
 
 </details>
 
@@ -447,14 +432,17 @@ Even if I can't read any of the Burmese, I still know which key phrase matched, 
 | Key           | Input            | Matches? |
 | ------------- | ---------------- | -------- |
 | `apple`       | `an apple`       | ✅ Yes   |
+| `apple`       | `an apple.`      | ✅ Yes   |
+| `apple`       | `an apple,`      | ✅ Yes   |
 | `apple`       | `pineapple`      | ❌ No    |
+| `apple`       | `apples`         | ❌ No    |
 | `192.168.1.1` | `ip:192.168.1.1` | ✅ Yes   |
 | `192.168.1.1` | `192.168.1.15`   | ❌ No    |
 | `10.10.1.1`   | `110.10.1.1`     | ❌ No    |
 
 ### Shadowed Keys (Prefix Handling)
 
-When one key is a prefix of another (e.g., `abc` vs `abcde`), both are stored in the FST. The **longer key takes precedence** when both could match.
+When one key is a prefix of another (e.g., `abc` vs `abcde`), the **longer key takes precedence** when both could match.
 
 | Input            | Match   |
 | ---------------- | ------- |
@@ -488,11 +476,11 @@ fst grep your.fst "exact-key"
 
 ## Installation
 
-### Using Cargo
+<!-- ### Using Cargo
 
 ```bash
 cargo install fstsed
-```
+``` -->
 
 ### From Source
 
