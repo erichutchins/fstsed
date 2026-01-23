@@ -46,19 +46,28 @@ fn test_dfir_indicators() {
     let input1 = "check 8.8.8.8 for details";
     let mut iter = fsed.find_iter(input1.as_bytes(), &mut cache);
     assert!(iter.next().is_some());
-    assert_eq!(iter.get_match().render(), "8.8.8.8 (google-dns)");
+    assert_eq!(
+        iter.get_match().display().to_string(),
+        "8.8.8.8 (google-dns)"
+    );
 
     // 2. IP Address with trailing dot (common in logs/sentences)
     let input2 = "Found 8.8.8.8. It is bad.";
     let mut iter = fsed.find_iter(input2.as_bytes(), &mut cache);
     assert_eq!(iter.next(), Some(6));
-    assert_eq!(iter.get_match().render(), "8.8.8.8 (google-dns)");
+    assert_eq!(
+        iter.get_match().display().to_string(),
+        "8.8.8.8 (google-dns)"
+    );
 
     // 3. Hostname in a complex string
     let input3 = "visit avsvmcloud.com; it is dangerous";
     let mut iter = fsed.find_iter(input3.as_bytes(), &mut cache);
     assert_eq!(iter.next(), Some(6));
-    assert_eq!(iter.get_match().render(), "avsvmcloud.com (solarwinds-ioc)");
+    assert_eq!(
+        iter.get_match().display().to_string(),
+        "avsvmcloud.com (solarwinds-ioc)"
+    );
 
     // 4. File Path Tests (Backslashes are now word boundaries if they aren't in is_word_char)
     // Actually \ is not in is_word_char, so it's a boundary.
@@ -66,7 +75,7 @@ fn test_dfir_indicators() {
     let mut iter = fsed.find_iter(input4.as_bytes(), &mut cache);
     assert_eq!(iter.next(), Some(4));
     assert_eq!(
-        iter.get_match().render(),
+        iter.get_match().display().to_string(),
         "C:\\Windows\\System32\\cmd.exe (shell)"
     );
 
@@ -77,12 +86,18 @@ fn test_dfir_indicators() {
     // First match should be test.8.8.8.8 (pos 32)
     let m1 = iter.next();
     assert_eq!(m1, Some(32));
-    assert_eq!(iter.get_match().render(), "8.8.8.8 (google-dns)");
+    assert_eq!(
+        iter.get_match().display().to_string(),
+        "8.8.8.8 (google-dns)"
+    );
 
     // Second match should be 1.8.8.8.8 (pos 46)
     let m2 = iter.next();
     assert_eq!(m2, Some(46));
-    assert_eq!(iter.get_match().render(), "8.8.8.8 (google-dns)");
+    assert_eq!(
+        iter.get_match().display().to_string(),
+        "8.8.8.8 (google-dns)"
+    );
 
     // Should be no more matches
     assert!(iter.next().is_none());

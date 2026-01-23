@@ -29,7 +29,22 @@ pub struct FstMatch<'a> {
     jsonvalue: Option<Value>,
 }
 
-impl FstMatch<'_> {
+impl<'a> FstMatch<'a> {
+    /// Creates a new `FstMatch` for testing or benchmarking.
+    pub fn new(
+        key: Cow<'a, str>,
+        value: Cow<'a, str>,
+        template: &'a Template,
+        jsonvalue: Option<Value>,
+    ) -> Self {
+        Self {
+            key,
+            value,
+            template,
+            jsonvalue,
+        }
+    }
+
     /// Returns a displayable object that renders the match.
     ///
     /// This uses `std::fmt::from_fn` to allow rendering directly to a formatter

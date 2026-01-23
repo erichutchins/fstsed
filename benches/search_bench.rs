@@ -20,8 +20,10 @@ use fake::rand::rngs::StdRng;
 use fake::rand::{Rng, SeedableRng};
 use fake::Fake;
 use fstsed::builder::build_fstsed;
-use fstsed::engine::{FstCache, FstSed};
+use fstsed::engine::{FstCache, FstMatch, FstSed};
 use fstsed::json::jsonquotes_range_iter;
+use fstsed::template::{Template, TemplatePart};
+use std::borrow::Cow;
 use std::hint::black_box;
 use termcolor::ColorChoice;
 
@@ -403,6 +405,59 @@ fn bench_cache_reuse(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark: Template rendering performance.
+///
+/// Compares specialized templates (Standard, KeyOnly) vs generic Custom templates.
+fn bench_template_rendering(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rendering");
+
+    let standard_template = Template::parse("<{key}|{value}>");
+    let key_only_template = Template::parse("{key}");
+    let custom_template = Template::parse("prefix {key} middle {value} suffix");
+
+    let match_standard = FstMatch::new(
+        Cow::Borrowed("my-key"),
+        Cow::Borrowed("my-value"),
+        &standard_template,
+        None,
+    );
+    let match_key_only = FstMatch::new(
+        Cow::Borrowed("my-key"),
+        Cow::Borrowed("my-value"),
+        &key_only_template,
+        None,
+    );
+    let match_custom = FstMatch::new(
+        Cow::Borrowed("my-key"),
+        Cow::Borrowed("my-value"),
+        &custom_template,
+        None,
+    );
+
+    group.bench_function("standard", |b| {
+        b.iter(|| {
+            let res = match_standard.display().to_string();
+            black_box(res);
+        });
+    });
+
+    group.bench_function("key_only", |b| {
+        b.iter(|| {
+            let res = match_key_only.display().to_string();
+            black_box(res);
+        });
+    });
+
+    group.bench_function("custom", |b| {
+        b.iter(|| {
+            let res = match_custom.display().to_string();
+            black_box(res);
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_fstsed_scaling,
@@ -410,6 +465,7 @@ criterion_group!(
     bench_jsonquotes_parsing,
     bench_longest_match_at,
     bench_cache_reuse,
+    bench_template_rendering,
 );
 
 criterion_main!(benches);
