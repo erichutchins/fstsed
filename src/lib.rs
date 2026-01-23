@@ -48,6 +48,7 @@ pub mod cli;
 pub mod engine;
 pub mod error;
 pub mod json;
+pub mod template;
 mod util;
 
 // Re-export public utilities

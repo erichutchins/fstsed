@@ -4,10 +4,10 @@
 //! multi-pattern matching using Finite State Transducers.
 
 use crate::error::Result;
+use crate::template::{render_fmt, Context};
 use camino::Utf8Path;
 use fst::raw::Fst;
 use memmap2::Mmap;
-use microtemplate::{render, Context};
 use serde_json::Value;
 use std::borrow::Cow;
 use termcolor::{Color, ColorChoice, ColorSpec, WriteColor};
@@ -29,13 +29,20 @@ pub struct FstMatch<'a> {
 }
 
 impl FstMatch<'_> {
-    /// Renders the match using the configured template.
+    /// Returns a displayable object that renders the match.
     ///
-    /// Template variables like `{key}` and `{value}` are replaced with
-    /// the actual matched key and its associated value.
+    /// This uses `std::fmt::from_fn` to allow rendering directly to a formatter
+    /// without intermediate allocation.
     #[must_use]
-    pub fn render(&self) -> String {
-        render(self.template, self)
+    pub fn display(&self) -> impl std::fmt::Display + '_ {
+        std::fmt::from_fn(move |f| {
+            // fast path for default template
+            if self.template == "<{key}|{value}>" {
+                write!(f, "<{}|{}>", self.key, self.value)
+            } else {
+                render_fmt(self.template, self, f)
+            }
+        })
     }
 }
 
@@ -530,9 +537,7 @@ impl<'a> FstSed {
             writer.write_all(&line[last_end..match_start])?;
 
             // Write replacement
-            let replacement = matches.get_match().render();
-            writer.set_color(&self.color_spec)?;
-            writer.write_all(replacement.as_bytes())?;
+            write!(writer, "{}", matches.get_match().display())?;
             writer.reset()?;
 
             last_end = match_start + matches.get_match_len();
@@ -554,9 +559,7 @@ impl<'a> FstSed {
         let mut matches = self.find_iter(line, cache);
 
         while let Some(_) = matches.next() {
-            let replacement = matches.get_match().render();
-            writer.set_color(&self.color_spec)?;
-            writer.write_all(replacement.as_bytes())?;
+            write!(writer, "{}", matches.get_match().display())?;
             writer.reset()?;
             writer.write_all(b"\n")?;
         }
@@ -618,7 +621,8 @@ impl<'a> FstSed {
             self.write_json_str_fragment(writer, &input[last_end..m], json_buf)?;
 
             // The match
-            let replacement = matcher.get_match().render();
+            // We need to render to a string first for JSON encoding
+            let replacement = matcher.get_match().display().to_string();
             writer.set_color(&self.color_spec)?;
             self.write_json_str_fragment(writer, replacement.as_bytes(), json_buf)?;
             writer.reset()?;

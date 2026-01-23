@@ -30,7 +30,6 @@ bstr = "1.12"
 camino = "1.2.2"
 clap = { version = "4.5.54", features = ["derive", "cargo", "wrap_help"] }
 fst = "0.4.7"
-
 ignore = "0.4.25"
 itermore = { version = "0.8.0", default-features = false, features = [
     "array_chunks",
@@ -38,7 +37,6 @@ itermore = { version = "0.8.0", default-features = false, features = [
 ] }
 memchr = "2.7.6"
 memmap2 = "0.9.9"
-microtemplate = "1.0.3"
 serde_json = "1.0.149"
 termcolor = "1.4.1"
 thiserror = "2.0.17"
