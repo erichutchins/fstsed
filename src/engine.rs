@@ -337,54 +337,114 @@ impl<'a> FstSed {
         let mut last_match_info = None;
         let value = &text[start..];
 
+        // ══════════════════════════════════════════════════════════════════════════════
+        // FST Traversal Loop: Find the longest matching key starting at `start`
+        // ══════════════════════════════════════════════════════════════════════════════
+        //
+        // We traverse the FST byte-by-byte, following transitions that match our input.
+        // The FST is structured so that each key ends with a SENTINEL byte (0x00),
+        // which marks a complete key. When we encounter a sentinel transition, we've
+        // found a potential match.
+        //
+        // Since we want the LONGEST match (e.g., "New York City" over "New York"),
+        // we don't return immediately upon finding a match. Instead, we record it
+        // and continue traversing to see if a longer key exists in the FST.
+        //
+        // Example FST structure for keys "app" and "apple":
+        //
+        //   root ─a─> ─p─> ─p─> ─SENTINEL─> (value for "app")
+        //                    └─l─> ─e─> ─SENTINEL─> (value for "apple")
+        //
+        // When matching "apple pie", we'll find both "app" and "apple" as potential
+        // matches, but we'll return "apple" as it's longer. Note that "applesauce"
+        // would NOT match "apple" because the word boundary check (below) would
+        // fail—the 's' following "apple" is a word character.
+        //
         for (i, &b) in value.iter().enumerate() {
-            if let Some(trans_index) = node.find_input(b) {
-                let t = node.transition(trans_index);
-                node = self.fst.node(t.addr);
-
-                if let Some(sentinel_index) = node.find_input(SENTINEL) {
-                    // validation: if key ends with a word char, next char must not be a word char.
-                    // Like the leading boundary check, this ensures we don't match 'apple'
-                    // inside 'applesauce'.
-                    let is_boundary = if i == value.len() - 1 {
-                        true
-                    } else {
-                        let next_byte = value[i + 1];
-                        if b < 128 && next_byte < 128 {
-                            // ASCII fast path: used to check trailing word character boundaries
-                            // without a full UTF-8 decode.
-                            if is_word_char(b as char) {
-                                !is_word_char(next_byte as char)
-                            } else {
-                                true
-                            }
-                        } else {
-                            // Unicode Fallback
-                            if let Some(next_char) = value[i + 1..].chars().next() {
-                                // check last character of the current match
-                                if let Some(last_char) = value[..=i].chars().next_back() {
-                                    if is_word_char(last_char) {
-                                        !is_word_char(next_char)
-                                    } else {
-                                        true
-                                    }
-                                } else {
-                                    true
-                                }
-                            } else {
-                                true
-                            }
-                        }
-                    };
-
-                    if is_boundary {
-                        // Remember this as a potentially longest match. We don't retrieve the
-                        // value yet to avoid unnecessary work if we find a longer match later.
-                        last_match_info = Some((node, sentinel_index, i));
-                    }
-                }
-            } else {
+            // Try to find a transition from the current node that matches byte `b`.
+            //
+            // In FST terminology, a "transition" is a labeled edge between nodes.
+            // Each transition has:
+            //   - An input byte (the label on the edge)
+            //   - A target node address (where the edge leads)
+            //   - An optional output value (used for storing associated data)
+            //
+            // For example, if we're at a node after matching "ap" and the next byte
+            // is 'p', we look for a transition labeled 'p' to continue to the "app"
+            // state. If no such transition exists, the FST has no keys with this prefix.
+            let Some(trans_index) = node.find_input(b) else {
                 break;
+            };
+
+            // Follow the transition to the next node in the FST.
+            let t = node.transition(trans_index);
+            node = self.fst.node(t.addr);
+
+            // Check if this node has a SENTINEL transition, indicating a complete key.
+            // The presence of a sentinel means the bytes we've consumed so far form
+            // a valid key in our dictionary.
+            if let Some(sentinel_index) = node.find_input(SENTINEL) {
+                // ──────────────────────────────────────────────────────────────────
+                // Word Boundary Validation (Trailing Edge)
+                // ──────────────────────────────────────────────────────────────────
+                //
+                // To prevent partial word matches, we verify that we're at a word
+                // boundary. A match is valid if:
+                //   1. We're at the end of the input text, OR
+                //   2. The boundary between matched text and following text is a
+                //      word boundary (at least one side is non-word character)
+                //
+                // This prevents matching "apple" inside "applesauce" or "pineapple".
+                // The logic mirrors regex word boundaries (\b): a boundary exists
+                // where a word character meets a non-word character.
+                //
+                // Word characters: alphanumeric (Unicode-aware) and underscore
+                // Non-word characters: whitespace, punctuation, etc.
+                //
+                let is_boundary = i == value.len() - 1 || {
+                    let next_byte = value[i + 1];
+
+                    if b < 128 && next_byte < 128 {
+                        // ┌─────────────────────────────────────────────────────────┐
+                        // │ ASCII Fast Path                                         │
+                        // │                                                         │
+                        // │ When both the last matched byte and the next byte are   │
+                        // │ ASCII (< 128), we can check word boundaries directly    │
+                        // │ without UTF-8 decoding overhead. This covers the vast   │
+                        // │ majority of English text processing.                    │
+                        // └─────────────────────────────────────────────────────────┘
+                        !is_word_char(b as char) || !is_word_char(next_byte as char)
+                    } else {
+                        // ┌─────────────────────────────────────────────────────────┐
+                        // │ Unicode Fallback Path                                   │
+                        // │                                                         │
+                        // │ For multi-byte UTF-8 characters, we must decode to get  │
+                        // │ the actual Unicode code points. This handles languages  │
+                        // │ like Chinese, Japanese, Arabic, Burmese, etc.           │
+                        // │                                                         │
+                        // │ We extract:                                             │
+                        // │   - last_char: final character of the matched portion   │
+                        // │   - next_char: first character after the match          │
+                        // └─────────────────────────────────────────────────────────┘
+                        let last_char = value[..=i].chars().next_back();
+                        let next_char = value[i + 1..].chars().next();
+
+                        match (last_char, next_char) {
+                            (Some(last), Some(next)) => !is_word_char(last) || !is_word_char(next),
+                            // If we can't decode either character, conservatively
+                            // treat it as a valid boundary to avoid missing matches.
+                            _ => true,
+                        }
+                    }
+                };
+
+                if is_boundary {
+                    // Record this as a candidate for the longest match. We store the
+                    // node and sentinel index rather than retrieving the value now,
+                    // avoiding unnecessary work if we find a longer match later.
+                    // The value will be retrieved after the loop completes.
+                    last_match_info = Some((node, sentinel_index, i));
+                }
             }
         }
 
