@@ -2,7 +2,7 @@
 name = "fstsed"
 version = "0.5.0"
 authors = ["Eric Hutchins"]
-description = "Find and replace/decorate text at scale using finite state transducers (fst)"
+description = "Find and replace/decorate search terms at scale using finite state transducers (fst)"
 homepage = "https://github.com/erichutchins/fstsed"
 repository = "https://github.com/erichutchins/fstsed"
 readme = "README.md"
