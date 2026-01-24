@@ -10,6 +10,7 @@ categories = ["text-processing", "command-line-interface"]
 keywords = ["cli", "fst", "sed", "dfir"]
 license = "Unlicense OR MIT"
 edition = "2021"
+rust-version = "1.93"
 
 [[bin]]
 name = "fstsed"

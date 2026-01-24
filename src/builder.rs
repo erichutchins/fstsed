@@ -13,7 +13,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::str;
 
-use crate::util::{is_word_char, SENTINEL};
+use crate::util::{is_word_char, BUFFERSIZE, COMPRESSION_LEVEL, SENTINEL};
 
 /// Statistics collected during FST building.
 struct BuildStats {
@@ -67,7 +67,11 @@ where
     eprintln!("Streaming sorted data directly to FST...");
     let wtr = BufWriter::new(File::create(output).map_err(FstSedError::Build)?);
     let mut set = SetBuilder::new(wtr).map_err(FstSedError::FstWrite)?;
-    let mut last_line: Option<Vec<u8>> = None;
+
+    // Double buffering to avoid allocations and allow dedup checking
+    let mut current_tuple = Vec::with_capacity(BUFFERSIZE);
+    let mut last_tuple = Vec::with_capacity(BUFFERSIZE);
+    let mut has_last = false;
 
     input.for_byte_line(|line| {
         if line.is_empty() {
@@ -81,20 +85,25 @@ where
         };
 
         let kv_bytes = keyvalue.as_bytes();
-        let mut tuple = Vec::with_capacity(kv_bytes.len() + 1 + (line.len() / 2));
-        tuple.extend_from_slice(kv_bytes);
-        tuple.push(SENTINEL);
 
-        if zstd::stream::copy_encode(line, &mut tuple, 3).is_ok() {
+        // Clear and rebuild current tuple
+        current_tuple.clear();
+        current_tuple.reserve(kv_bytes.len() + 1 + (line.len() / 2));
+        current_tuple.extend_from_slice(kv_bytes);
+        current_tuple.push(SENTINEL);
+
+        if zstd::stream::copy_encode(line, &mut current_tuple, COMPRESSION_LEVEL).is_ok() {
             // FST requires strictly increasing keys. Dedup on the fly.
-            if let Some(ref last) = last_line {
-                if tuple == *last {
-                    return Ok(true);
-                }
+            if has_last && current_tuple == last_tuple {
+                return Ok(true);
             }
-            set.insert(&tuple)
+
+            set.insert(&current_tuple)
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
-            last_line = Some(tuple);
+
+            // Swap current to last for next iteration
+            std::mem::swap(&mut current_tuple, &mut last_tuple);
+            has_last = true;
         } else {
             stats.num_errors += 1;
         }
@@ -142,7 +151,7 @@ where
         data_pool.extend_from_slice(kv_bytes);
         data_pool.push(SENTINEL);
 
-        if zstd::stream::copy_encode(line, &mut data_pool, 3).is_ok() {
+        if zstd::stream::copy_encode(line, &mut data_pool, COMPRESSION_LEVEL).is_ok() {
             entries.push(Entry {
                 start,
                 end: data_pool.len(),

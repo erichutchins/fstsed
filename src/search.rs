@@ -471,6 +471,7 @@ impl FstSed {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::COMPRESSION_LEVEL;
     use camino::Utf8PathBuf;
 
     #[test]
@@ -541,7 +542,7 @@ mod tests {
                     let mut row = k.as_bytes().to_vec();
                     row.push(SENTINEL);
                     row.extend_from_slice(
-                        zstd::stream::encode_all(v.as_bytes(), 3)
+                        zstd::stream::encode_all(v.as_bytes(), COMPRESSION_LEVEL)
                             .unwrap()
                             .as_slice(),
                     );

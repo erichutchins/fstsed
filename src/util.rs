@@ -12,6 +12,9 @@ pub const BUFFERSIZE: usize = 64 * 1024;
 /// Sentinel byte used to separate keys from values in the FST.
 pub const SENTINEL: u8 = 0;
 
+/// Default compression level for ZSTD (3 is standard default, good balance of speed/ratio).
+pub const COMPRESSION_LEVEL: i32 = 3;
+
 /// Compile-time lookup table for ASCII word characters (`[a-zA-Z0-9_]`).
 ///
 /// A single array index operation is faster than multiple range checks.
