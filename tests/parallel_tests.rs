@@ -15,11 +15,22 @@ fn create_temp_fst(name: &str) -> Utf8PathBuf {
         name,
         std::process::id()
     ));
-    let json_path = dir.join(format!("test_parallel_data_{}.json", std::process::id()));
+    let json_path = dir.join(format!(
+        "test_parallel_data_{}_{}.json",
+        name,
+        std::process::id()
+    ));
+
+    // Ensure the parent directory for the FST path exists
+    if let Some(parent) = fst_path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
 
     let mut file = fs::File::create(&json_path).unwrap();
     writeln!(file, r#"{{"key": "foo", "value": "FOO"}}"#).unwrap();
     writeln!(file, r#"{{"key": "bar", "value": "BAR"}}"#).unwrap();
+    // Flush to ensure data is written before fstsed reads it
+    file.sync_all().unwrap();
 
     let status = Command::new(&bin)
         .arg("--build")
@@ -140,10 +151,17 @@ fn test_cli_flags_ignore_and_hidden() {
         let dir = std::env::temp_dir();
         let fst_path = dir.join(format!("test_flags_fst_{}.fst", std::process::id()));
         let json_path = dir.join(format!("test_flags_data_{}.json", std::process::id()));
+
+        // Ensure parent directory exists
+        if let Some(parent) = fst_path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+
         let mut file = fs::File::create(&json_path).unwrap();
         writeln!(file, r#"{{"key": "visible", "value": "VISIBLE"}}"#).unwrap();
         writeln!(file, r#"{{"key": "secret_ignored", "value": "IGNORED"}}"#).unwrap();
         writeln!(file, r#"{{"key": "hidden", "value": "HIDDEN"}}"#).unwrap();
+        file.sync_all().unwrap();
 
         // Build FST
         let status = Command::new(&bin)

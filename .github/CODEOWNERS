@@ -1,0 +1,37 @@
+# CODEOWNERS file for fstsed
+# This file specifies which users or teams should be requested for review
+# when code in certain files or directories is modified.
+#
+# For more details about CODEOWNERS, see:
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Global owner - requires review for all changes
+* @erichutchins
+
+# Core FST implementation
+/src/main.rs @erichutchins
+/src/lib.rs @erichutchins
+
+# Benchmarks
+/benches/ @erichutchins
+/benchmarks/ @erichutchins
+
+# Tests
+/tests/ @erichutchins
+
+# Configuration and build
+Cargo.toml @erichutchins
+Cargo.lock @erichutchins
+.rustfmt.toml @erichutchins
+clippy.toml @erichutchins
+
+# GitHub Actions and CI/CD
+.github/ @erichutchins
+.github/workflows/ @erichutchins
+
+# Documentation
+*.md @erichutchins
+/docs/ @erichutchins
+
+# License and legal
+LICENSE @erichutchins
