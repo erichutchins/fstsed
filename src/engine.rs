@@ -16,7 +16,7 @@ use termcolor::{Color, ColorChoice, ColorSpec, WriteColor};
 use bstr::ByteSlice;
 
 use crate::json::jsonquotes_range_iter;
-use crate::util::{is_word_byte, is_word_char, mmap_fst, BUFFERSIZE, SENTINEL};
+use crate::util::{is_word_char, mmap_fst, BUFFERSIZE, SENTINEL};
 use bstr::io::BufReadExt;
 use std::io::{self, BufRead, Write};
 
@@ -146,20 +146,10 @@ impl<'f, 'c, 'a> FstMatches<'f, 'c, 'a> {
     /// - the character at `pos-1` is NOT a word character
     #[inline]
     fn is_word_start_boundary(&self, pos: usize) -> bool {
-        if pos == 0 {
-            return true;
-        }
-        let prev = self.haystack[pos - 1];
-        if prev < 128 {
-            // ASCII fast path
-            !is_word_byte(prev)
-        } else {
-            // Unicode fallback: decode the previous character
-            self.haystack[..pos]
-                .chars()
-                .next_back()
-                .is_none_or(|c| !is_word_char(c))
-        }
+        self.haystack[..pos]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_word_char(c))
     }
 }
 
@@ -427,39 +417,19 @@ impl FstSed {
                 // Non-word characters: whitespace, punctuation, etc.
                 //
                 let is_boundary = i == value.len() - 1 || {
-                    let next_byte = value[i + 1];
+                    let last_char = value[..=i].chars().next_back();
+                    let next_char = value[i + 1..].chars().next();
 
-                    if b < 128 && next_byte < 128 {
-                        // ┌─────────────────────────────────────────────────────────┐
-                        // │ ASCII Fast Path                                         │
-                        // │                                                         │
-                        // │ When both the last matched byte and the next byte are   │
-                        // │ ASCII (< 128), we can check word boundaries directly    │
-                        // │ without UTF-8 decoding overhead. This covers the vast   │
-                        // │ majority of English text processing.                    │
-                        // └─────────────────────────────────────────────────────────┘
-                        !is_word_char(b as char) || !is_word_char(next_byte as char)
-                    } else {
-                        // ┌─────────────────────────────────────────────────────────┐
-                        // │ Unicode Fallback Path                                   │
-                        // │                                                         │
-                        // │ For multi-byte UTF-8 characters, we must decode to get  │
-                        // │ the actual Unicode code points. This handles languages  │
-                        // │ like Chinese, Japanese, Arabic, Burmese, etc.           │
-                        // │                                                         │
-                        // │ We extract:                                             │
-                        // │   - last_char: final character of the matched portion   │
-                        // │   - next_char: first character after the match          │
-                        // └─────────────────────────────────────────────────────────┘
-                        let last_char = value[..=i].chars().next_back();
-                        let next_char = value[i + 1..].chars().next();
-
-                        match (last_char, next_char) {
-                            (Some(last), Some(next)) => !is_word_char(last) || !is_word_char(next),
-                            // If we can't decode either character, conservatively
-                            // treat it as a valid boundary to avoid missing matches.
-                            _ => true,
-                        }
+                    match (last_char, next_char) {
+                        // A word boundary exists where a word character meets a non-word
+                        // character. Equivalently, there is NO boundary only if BOTH
+                        // characters are word characters (i.e., we're in the middle of a word).
+                        //
+                        // Logic: !(is_word(last) && is_word(next)) => !is_word(last) || !is_word(next)
+                        (Some(last), Some(next)) => !is_word_char(last) || !is_word_char(next),
+                        // If we can't decode either character (e.g., end of string),
+                        // we conservatively treat it as a valid boundary.
+                        _ => true,
                     }
                 };
 

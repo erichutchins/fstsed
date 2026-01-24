@@ -19,8 +19,8 @@ pub const SENTINEL: u8 = 0;
 ///
 /// Note: We use `while` loops instead of `for` or iterators because this is
 /// a `const` context—`for` loops and iterator methods aren't const-stable yet.
-const IS_WORD_BYTE_TABLE: [bool; 256] = {
-    let mut table = [false; 256];
+const IS_WORD_BYTE_TABLE: [bool; 128] = {
+    let mut table = [false; 128];
 
     // Underscore
     table[b'_' as usize] = true;
@@ -56,7 +56,7 @@ const IS_WORD_BYTE_TABLE: [bool; 256] = {
 #[inline]
 #[must_use]
 pub fn is_word_byte(b: u8) -> bool {
-    IS_WORD_BYTE_TABLE[b as usize]
+    b < 128 && IS_WORD_BYTE_TABLE[b as usize]
 }
 
 /// Returns `true` if the given character is a word character.
