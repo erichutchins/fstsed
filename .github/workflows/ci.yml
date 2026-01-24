@@ -94,7 +94,7 @@ jobs:
         run: cargo tarpaulin --out Xml --timeout 300 --exclude-files benches/* benchmarks/*
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           files: ./cobertura.xml
           fail_ci_if_error: false
