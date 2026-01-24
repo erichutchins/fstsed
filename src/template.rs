@@ -2,7 +2,7 @@
 //!
 //! This module is a zero-allocation rendering engine that writes directly to a
 //! `std::fmt::Formatter`. The logic is adapted from the `microtemplate` crate
-//! (https://github.com/Legend-of-iPhoenix/microtemplate).
+//! (<https://github.com/Legend-of-iPhoenix/microtemplate>).
 
 use std::fmt;
 
