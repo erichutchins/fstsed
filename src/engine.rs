@@ -16,7 +16,7 @@ use termcolor::{Color, ColorChoice, ColorSpec, WriteColor};
 use bstr::ByteSlice;
 
 use crate::json::jsonquotes_range_iter;
-use crate::util::{is_word_char, mmap_fst, BUFFERSIZE, SENTINEL};
+use crate::util::{is_word_byte, is_word_char, mmap_fst, BUFFERSIZE, SENTINEL};
 use bstr::io::BufReadExt;
 use std::io::{self, BufRead, Write};
 
@@ -146,10 +146,20 @@ impl<'f, 'c, 'a> FstMatches<'f, 'c, 'a> {
     /// - the character at `pos-1` is NOT a word character
     #[inline]
     fn is_word_start_boundary(&self, pos: usize) -> bool {
-        self.haystack[..pos]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !is_word_char(c))
+        if pos == 0 {
+            return true;
+        }
+        let prev = self.haystack[pos - 1];
+        if prev < 128 {
+            // ASCII fast path: direct byte check
+            !is_word_byte(prev)
+        } else {
+            // Unicode fallback: decode the previous character
+            self.haystack[..pos]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !is_word_char(c))
+        }
     }
 }
 
@@ -417,19 +427,27 @@ impl FstSed {
                 // Non-word characters: whitespace, punctuation, etc.
                 //
                 let is_boundary = i == value.len() - 1 || {
-                    let last_char = value[..=i].chars().next_back();
-                    let next_char = value[i + 1..].chars().next();
+                    let next_byte = value[i + 1];
 
-                    match (last_char, next_char) {
-                        // A word boundary exists where a word character meets a non-word
-                        // character. Equivalently, there is NO boundary only if BOTH
-                        // characters are word characters (i.e., we're in the middle of a word).
-                        //
-                        // Logic: !(is_word(last) && is_word(next)) => !is_word(last) || !is_word(next)
-                        (Some(last), Some(next)) => !is_word_char(last) || !is_word_char(next),
-                        // If we can't decode either character (e.g., end of string),
-                        // we conservatively treat it as a valid boundary.
-                        _ => true,
+                    if b < 128 && next_byte < 128 {
+                        // ASCII fast path: direct byte check
+                        !is_word_byte(b) || !is_word_byte(next_byte)
+                    } else {
+                        // Unicode fallback: decode the characters
+                        let last_char = value[..=i].chars().next_back();
+                        let next_char = value[i + 1..].chars().next();
+
+                        match (last_char, next_char) {
+                            // A word boundary exists where a word character meets a non-word
+                            // character. Equivalently, there is NO boundary only if BOTH
+                            // characters are word characters (i.e., we're in the middle of a word).
+                            //
+                            // Logic: !(is_word(last) && is_word(next)) => !is_word(last) || !is_word(next)
+                            (Some(last), Some(next)) => !is_word_char(last) || !is_word_char(next),
+                            // If we can't decode either character (e.g., end of string),
+                            // we conservatively treat it as a valid boundary.
+                            _ => true,
+                        }
                     }
                 };
 
