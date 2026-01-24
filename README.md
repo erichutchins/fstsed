@@ -4,6 +4,9 @@ Search **and enrich** at near-ripgrep speed
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.93%2B-orange.svg)](https://www.rust-lang.org)
+[![Claude](https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff)](https://claude.ai)
+[![Gemini](https://img.shields.io/badge/Gemini-8E75FF?logo=googlegemini&logoColor=fff)](https://antigravity.google)
+[![Zed](https://img.shields.io/badge/Zed-000?logo=zedindustries&logoColor=fff)](https://zed.dev)
 
 **fstsed** is a high-performance search-and-enrichment tool for cases where every match needs its own context. It's not a faster ripgrep -- instead, fstsed brings ripgrep-class performance to a different problem:
 
@@ -513,6 +516,8 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 ## Acknowledgements
 
 fstsed is built on BurntSushi's excellent `fst` crate and is inspired by the performance principles behind ripgrep. This project would not exist without that foundational work.
+
+This project was developed with significant assistance from **Claude 4.5 Sonnet** and **Google Gemini**, via **Zed** and **AntiGravity** editors, respectively.
 
 ---
 
