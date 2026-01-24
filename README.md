@@ -60,11 +60,11 @@ Inline enrichment eliminates context switching. You read enriched output directl
 
 ## Use Cases
 
-| Tool | Patterns | Enrichment | Scaling |
-| :--- | :--- | :--- | :--- |
-| `grep -f searchterms.txt` | Regex and fixed strings | No capability | Linear with keys |
-| `rg -f searchterms.txt --replace "replacement"` | Regex and fixed strings | One replacement string for all searchterms (although that replacement string can include [named capture groups](https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md#replacements) from the regex search) | Search optimized |
-| `fstsed -f searchterms.fst` | Fixed strings | Replacement text **per search term** | Constant time complexity |
+| Tool                                            | Patterns                | Enrichment                                                                                                                                                                                                      | Scaling                  |
+| :---------------------------------------------- | :---------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------- |
+| `grep -f searchterms.txt`                       | Regex and fixed strings | No capability                                                                                                                                                                                                   | Linear with keys         |
+| `rg -f searchterms.txt --replace "replacement"` | Regex and fixed strings | One replacement string for all searchterms (although that replacement string can include [named capture groups](https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md#replacements) from the regex search) | Search optimized         |
+| `fstsed -f searchterms.fst`                     | Fixed strings           | Replacement text **per search term**                                                                                                                                                                            | Constant time complexity |
 
 fstsed trades a small amount of raw speed (vs pure ripgrep) to gain **rich, structured, per-indicator context**.
 
@@ -212,7 +212,6 @@ Examples:
 
 </details>
 
-<details>
 <summary><strong>Template Syntax</strong></summary>
 
 Templates control how matches are rendered in output.
@@ -254,8 +253,6 @@ When no template is specified, fstsed uses:
 ```
 
 This outputs the matched key and its full JSON payload, useful for debugging or when you need all metadata.
-
-</details>
 
 ---
 
@@ -405,7 +402,6 @@ Even if I can't read any of the Burmese, I still know which key phrase matched, 
 
 ---
 
-<details>
 <summary><strong>Limitations</strong></summary>
 
 ### Current Constraints
@@ -419,12 +415,12 @@ Even if I can't read any of the Burmese, I still know which key phrase matched, 
 - **Literal strings only**  
   Patterns are exact strings, not regular expressions. Use ripgrep for regex needs.
 
+- **No null bytes in keys**  
+  Keys must not contain null bytes (`\0`). The SENTINEL character is used internally to separate keys from values.
+
 - **Immutable databases**  
   FST databases cannot be updated incrementally. Any changes require a full rebuild.
 
-</details>
-
-<details>
 <summary><strong>Matching Semantics & Build Notes</strong></summary>
 
 ### Boundary Matching
@@ -445,12 +441,43 @@ Even if I can't read any of the Burmese, I still know which key phrase matched, 
 
 ### Shadowed Keys (Prefix Handling)
 
-When one key is a prefix of another (e.g., `abc` vs `abcde`), the **longer key takes precedence** when both could match.
+**Important:** Due to word boundary requirements, purely alphanumeric keys like `abc` and `abcde` do NOT shadow each other. They match independently when word-bounded.
 
-| Input            | Match   |
-| ---------------- | ------- |
-| `hello abc test` | `abc`   |
-| `foo abcde test` | `abcde` |
+**True shadowing** occurs when a shorter key followed by a **non-word character** forms a longer key:
+
+| Shorter Key | Longer Key    | Shadowing? | Reason                                         |
+| ----------- | ------------- | ---------- | ---------------------------------------------- |
+| `API`       | `API-KEY`     | ✅ Yes     | Hyphen is non-word char                        |
+| `user`      | `user@domain` | ✅ Yes     | `@` is non-word char                           |
+| `file`      | `file.txt`    | ✅ Yes     | Dot is non-word char                           |
+| `abc`       | `abcde`       | ❌ No      | Both need word boundaries; match independently |
+| `test`      | `testing`     | ❌ No      | Both need word boundaries; match independently |
+
+**Examples with shadowed keys:**
+
+| Input              | Match         | Why                               |
+| ------------------ | ------------- | --------------------------------- |
+| `use API-KEY here` | `API-KEY`     | `API` is shadowed, never matches  |
+| `send user@domain` | `user@domain` | `user` is shadowed, never matches |
+| `read file.txt`    | `file.txt`    | `file` is shadowed, never matches |
+
+**Examples WITHOUT shadowing:**
+
+| Input            | Match   | Why                                          |
+| ---------------- | ------- | -------------------------------------------- |
+| `hello abc test` | `abc`   | Word-bounded match                           |
+| `foo abcde test` | `abcde` | Word-bounded match                           |
+| `abc and abcde`  | Both    | Each matches independently when word-bounded |
+
+**Keys can contain internal non-word characters:**
+
+- User-Agent strings: `Mozilla/5.0`
+- IP addresses: `192.168.1.1`
+- File paths: `C:\\Windows\\System32`
+- API endpoints: `api-v2-endpoint`
+- Email patterns: `user@example.com`
+
+These are valid keys because the non-word characters are internal, not at the boundaries where matching occurs.
 
 ### Build Process
 
@@ -472,8 +499,6 @@ fst range your.fst
 # Check if a specific key exists
 fst grep your.fst "exact-key"
 ```
-
-</details>
 
 ---
 

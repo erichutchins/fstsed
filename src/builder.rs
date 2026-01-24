@@ -2,6 +2,20 @@
 //!
 //! This module provides [`build_fstsed`] for creating FST databases from
 //! newline-delimited JSON (NDJSON) input.
+//!
+//! ## Key Constraints
+//!
+//! Keys extracted from JSON must adhere to these constraints:
+//!
+//! - **No null bytes**: Keys cannot contain `\0` (the SENTINEL character is used
+//!   internally to separate keys from values in the FST structure)
+//! - **UTF-8 encoded**: All keys must be valid UTF-8 strings
+//! - **Word boundaries**: Keys are matched at word boundaries during search
+//!
+//! The build process will detect and warn about:
+//! - Keys containing SENTINEL (null byte) characters
+//! - Keys starting or ending with non-word characters
+//! - Keys that are shadowed by longer keys with non-word character separators
 
 use crate::error::{FstSedError, Result};
 use bstr::io::BufReadExt;
@@ -13,7 +27,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::str;
 
-use crate::util::{is_word_char, BUFFERSIZE, COMPRESSION_LEVEL, SENTINEL};
+use crate::util::{is_word_byte, is_word_char, BUFFERSIZE, COMPRESSION_LEVEL, SENTINEL};
 
 /// Statistics collected during FST building.
 struct BuildStats {
@@ -194,15 +208,22 @@ where
 /// Detects and warns about keys that may cause matching issues.
 ///
 /// This includes:
+/// - Keys containing SENTINEL (null byte) characters (will corrupt the FST structure)
 /// - Keys that start or end with non-word characters (won't match at word boundaries)
 /// - Keys that are shadowed by longer keys (e.g., "apple" shadowed by "applepie")
 fn detect_problematic_keys(entries: &[Entry], data_pool: &[u8]) {
     let mut shadowed_keys = BTreeSet::new();
     let mut nonword_keys = BTreeSet::new();
+    let mut sentinel_keys = BTreeSet::new();
 
     for (i, e1) in entries.iter().enumerate() {
         let key1_bytes = &data_pool[e1.start..e1.start + e1.key_len];
         let key1_str = str::from_utf8(key1_bytes).unwrap_or("???");
+
+        // Check for SENTINEL character in key
+        if key1_bytes.contains(&SENTINEL) {
+            sentinel_keys.insert(key1_str.to_string());
+        }
 
         // Check for non-word character boundaries
         if let Some(first) = key1_str.chars().next() {
@@ -216,13 +237,32 @@ fn detect_problematic_keys(entries: &[Entry], data_pool: &[u8]) {
         }
 
         // Check for shadowed keys
+        // A key is truly shadowed only if a longer key exists where the character
+        // immediately after the shorter key is a non-word character.
+        // Example: "API" is shadowed by "API-KEY" because '-' is non-word.
+        // Counter-example: "abc" is NOT shadowed by "abcde" because 'd' is a word char,
+        // and both keys require word boundaries to match.
         if i + 1 < entries.len() {
             let e2 = &entries[i + 1];
             let e2_data = &data_pool[e2.start..e2.end];
-            if e2_data.starts_with(key1_bytes) && e2_data[e1.key_len] != SENTINEL {
+            if e2_data.starts_with(key1_bytes)
+                && e2_data[e1.key_len] != SENTINEL
+                && !is_word_byte(e2_data[e1.key_len])
+            {
                 shadowed_keys.insert(key1_str.to_string());
             }
         }
+    }
+
+    if !sentinel_keys.is_empty() {
+        eprintln!(
+            "Error: {} keys contain SENTINEL (null byte) characters...",
+            sentinel_keys.len()
+        );
+        for k in sentinel_keys.iter().take(10) {
+            eprintln!("  - {k:?}");
+        }
+        eprintln!("Keys must not contain null bytes (\\0) as this conflicts with internal storage format.");
     }
 
     if !nonword_keys.is_empty() {
