@@ -4,8 +4,8 @@
 //! randomly generated inputs.
 
 use camino::Utf8PathBuf;
-use fstsed::engine::{FstCache, FstSed};
 use fstsed::json::jsonquotes_range_iter;
+use fstsed::search::{FstCache, FstSed};
 use fstsed::{is_word_byte, is_word_char};
 use proptest::prelude::*;
 use std::fs::File;

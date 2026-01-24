@@ -17,7 +17,7 @@
 //! ## Quick Start
 //!
 //! ```no_run
-//! use fstsed::engine::{FstSed, FstCache};
+//! use fstsed::{FstSed, FstCache};
 //! use termcolor::ColorChoice;
 //! use camino::Utf8PathBuf;
 //!
@@ -38,18 +38,21 @@
 //!
 //! ## Main Types
 //!
-//! - [`engine::FstSed`] - The main search engine wrapping an FST database
-//! - [`engine::FstCache`] - Reusable buffers for search operations
-//! - [`engine::FstMatch`] - A single match with key, value, and template rendering
+//! - [`FstSed`] - The main search engine wrapping an FST database
+//! - [`FstCache`] - Reusable buffers for search operations
+//! - [`FstMatch`] - A single match with key, value, and template rendering
 //! - [`builder::build_fstsed`] - Function to build FST databases from JSON input
 
 pub mod builder;
 pub mod cli;
-pub mod engine;
 pub mod error;
 pub mod json;
+pub mod matches;
+pub mod search;
 pub mod template;
 mod util;
 
 // Re-export public utilities
+pub use matches::{FstMatch, FstMatches};
+pub use search::{FstCache, FstSed};
 pub use util::{is_word_byte, is_word_char, BUFFERSIZE, SENTINEL};

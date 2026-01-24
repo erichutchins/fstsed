@@ -1,5 +1,5 @@
 use camino::Utf8PathBuf;
-use fstsed::engine::{FstCache, FstSed};
+use fstsed::search::{FstCache, FstSed};
 use std::fs;
 use std::process::Command;
 
