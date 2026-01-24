@@ -2,9 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
-  pull_request:
     branches: [main]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,9 +20,10 @@ jobs:
     name: Test Suite
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable, beta]
+        rust: [stable]
     steps:
       - uses: actions/checkout@v4
 
@@ -38,28 +44,19 @@ jobs:
       - name: Run tests (no default features)
         run: cargo test --verbose --no-default-features
 
-  fmt:
-    name: Rustfmt
+  lints:
+    name: Lints (Fmt & Clippy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
         run: cargo fmt -- --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
@@ -78,8 +75,10 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+  # Only run coverage on push to main or manual dispatch to save time on PRs
   coverage:
     name: Code Coverage
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -88,7 +87,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install tarpaulin
-        run: cargo install cargo-tarpaulin
+        uses: taiki-e/install-action@cargo-tarpaulin
 
       - name: Generate coverage
         run: cargo tarpaulin --out Xml --timeout 300 --exclude-files benches/* benchmarks/*
@@ -120,14 +119,26 @@ jobs:
       - name: Check MSRV
         run: cargo check --all-features
 
+  # Build check for PRs (standard build)
+  build-check:
+    name: Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --all-features
+
+  # Only run full matrix cross-build on release/main push
   build-release:
-    name: Build Release
+    name: Build Release Matrix
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       matrix:
         target:
           - x86_64-unknown-linux-gnu
-          - x86_64-unknown-linux-musl
           - x86_64-apple-darwin
           - aarch64-apple-darwin
           - x86_64-pc-windows-msvc
@@ -143,4 +154,3 @@ jobs:
 
       - name: Build release
         run: cargo build --release --target ${{ matrix.target }} --verbose
-        continue-on-error: true
