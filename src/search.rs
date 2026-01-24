@@ -351,6 +351,7 @@ impl FstSed {
             writer.write_all(&line[last_end..match_start])?;
 
             // Write replacement
+            writer.set_color(&self.color_spec)?;
             write!(writer, "{}", matches.get_match().display())?;
             writer.reset()?;
 
@@ -372,6 +373,7 @@ impl FstSed {
         let mut matches = self.find_iter(line, cache);
 
         while let Some(_) = matches.next() {
+            writer.set_color(&self.color_spec)?;
             write!(writer, "{}", matches.get_match().display())?;
             writer.reset()?;
             writer.write_all(b"\n")?;
@@ -610,6 +612,32 @@ mod tests {
         let matches: Vec<usize> = fsed.find_iter(haystack, &mut cache).collect();
 
         assert_eq!(matches, vec![0, 6]);
+
+        let _ = std::fs::remove_file(fst_path);
+    }
+
+    #[test]
+    fn test_fstsed_text_color() {
+        let fst_path = create_test_fst("text_color", &[("foo", "bar")]);
+        // Use Always to ensure color spec is applied
+        let fsed = FstSed::new(&fst_path, None, ColorChoice::Always).unwrap();
+
+        let haystack = "hello foo world".as_bytes();
+        let mut cache = FstCache::new();
+
+        // Use Ansi wrapper to capture raw escapes for inspection
+        use termcolor::Ansi;
+        let mut out = Ansi::new(vec![]);
+
+        fsed.stream_find(&mut &haystack[..], &mut out, &mut cache, false, false)
+            .unwrap();
+
+        let result = String::from_utf8(out.into_inner()).unwrap();
+        // The result should contain the raw ANSI red escape code
+        assert!(result.contains("\x1b[31m"));
+        assert!(result.contains("\x1b[1m"));
+        assert!(result.contains("<foo|bar>"));
+        assert!(result.contains("\x1b[0m"));
 
         let _ = std::fs::remove_file(fst_path);
     }

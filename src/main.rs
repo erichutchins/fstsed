@@ -6,7 +6,7 @@ use fstsed::cli::{Args, ArgsColorChoice};
 use fstsed::{FstCache, FstSed, BUFFERSIZE};
 use ignore::{DirEntry, WalkBuilder};
 use std::fs::File;
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, IsTerminal};
 use std::path::Path;
 use std::sync::Arc;
 use termcolor::{BufferWriter, ColorChoice};
@@ -48,9 +48,17 @@ fn main() -> Result<()> {
 
 fn determine_color_mode(args: &Args) -> ColorChoice {
     match args.color {
-        ArgsColorChoice::Auto => ColorChoice::Auto,
         ArgsColorChoice::Always => ColorChoice::Always,
         ArgsColorChoice::Never => ColorChoice::Never,
+        ArgsColorChoice::Auto => {
+            if std::env::var_os("NO_COLOR").is_some() {
+                ColorChoice::Never
+            } else if io::stdout().is_terminal() {
+                ColorChoice::Auto
+            } else {
+                ColorChoice::Never
+            }
+        }
     }
 }
 
