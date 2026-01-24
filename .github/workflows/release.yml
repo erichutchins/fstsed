@@ -1,0 +1,191 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g., 0.5.0)"
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  verify-version:
+    name: Verify Version Consistency
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+
+      - name: Extract and verify version
+        id: extract
+        run: |
+          # Extract version from git tag or workflow input
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG_VERSION=${{ github.event.release.tag_name }}
+            # Remove 'v' prefix if present
+            TAG_VERSION=${TAG_VERSION#v}
+          else
+            TAG_VERSION=${{ github.event.inputs.version }}
+          fi
+
+          # Get version from Cargo.toml
+          CARGO_VERSION=$(grep -oP '^version = "\K[^"]+' Cargo.toml)
+
+          echo "Tag/Input version: $TAG_VERSION"
+          echo "Cargo.toml version: $CARGO_VERSION"
+          echo "version=$TAG_VERSION" >> $GITHUB_OUTPUT
+
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::Version mismatch! Tag: $TAG_VERSION, Cargo.toml: $CARGO_VERSION"
+            exit 1
+          fi
+
+  publish-crate:
+    name: Publish to crates.io
+    needs: verify-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --all-features --verbose
+
+      - name: Check documentation
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    if: github.event_name == 'release'
+    needs: verify-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            use_cross: false
+            artifact_name: fstsed
+            asset_name: fstsed-${{ needs.verify-version.outputs.version }}-x86_64-unknown-linux-gnu
+
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            use_cross: true
+            artifact_name: fstsed
+            asset_name: fstsed-${{ needs.verify-version.outputs.version }}-aarch64-unknown-linux-gnu
+
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            use_cross: true
+            artifact_name: fstsed
+            asset_name: fstsed-${{ needs.verify-version.outputs.version }}-x86_64-unknown-linux-musl
+
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            use_cross: false
+            artifact_name: fstsed
+            asset_name: fstsed-${{ needs.verify-version.outputs.version }}-x86_64-apple-darwin
+
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            use_cross: false
+            artifact_name: fstsed
+            asset_name: fstsed-${{ needs.verify-version.outputs.version }}-aarch64-apple-darwin
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            use_cross: false
+            artifact_name: fstsed.exe
+            asset_name: fstsed-${{ needs.verify-version.outputs.version }}-x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross
+
+      - name: Build binary
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Create archive (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          BINARY_PATH=target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          ARCHIVE_NAME=${{ matrix.asset_name }}.tar.gz
+          tar -czf "$ARCHIVE_NAME" -C "$(dirname "$BINARY_PATH")" "$(basename "$BINARY_PATH")"
+          ls -lh "$ARCHIVE_NAME"
+          echo "ASSET=$ARCHIVE_NAME" >> $GITHUB_ENV
+
+      - name: Create archive (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $BinaryPath = "target\${{ matrix.target }}\release\${{ matrix.artifact_name }}"
+          $ArchiveName = "${{ matrix.asset_name }}.zip"
+          Compress-Archive -Path $BinaryPath -DestinationPath $ArchiveName
+          Get-Item $ArchiveName | Select-Object -ExpandProperty FullName
+          Add-Content -Path $env:GITHUB_ENV -Value "ASSET=$ArchiveName"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ env.ASSET }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create-checksums:
+    name: Create checksums
+    if: github.event_name == 'release'
+    needs: [build-binaries, verify-version]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v3
+
+      - name: Generate SHA256 checksums
+        run: |
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec sha256sum {} \; > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload checksums
+        uses: softprops/action-gh-release@v1
+        with:
+          files: SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
