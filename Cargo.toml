@@ -1,8 +1,8 @@
 [package]
 name = "fstsed"
-version = "0.4.0"                                                                            #:version
+version = "0.5.0"
 authors = ["Eric Hutchins"]
-description = "Find and replace/decorate text at scale using finite state transducers (fst)"
+description = "Find and replace/decorate search terms at scale using finite state transducers (fst)"
 homepage = "https://github.com/erichutchins/fstsed"
 repository = "https://github.com/erichutchins/fstsed"
 readme = "README.md"
@@ -10,6 +10,7 @@ categories = ["text-processing", "command-line-interface"]
 keywords = ["cli", "fst", "sed", "dfir"]
 license = "Unlicense OR MIT"
 edition = "2021"
+rust-version = "1.93"
 
 [[bin]]
 name = "fstsed"
@@ -25,20 +26,30 @@ panic = "abort"
 incremental = false
 
 [dependencies]
-anyhow = "1.0.81"
-bstr = "1.9.1"
-camino = "1.1.6"
-clap = { version = "4.5.4", features = ["derive", "cargo"] }
+anyhow = "1.0.100"
+bstr = "1.12"
+camino = "1.2.2"
+clap = { version = "4.5.54", features = ["derive", "cargo", "wrap_help"] }
 fst = "0.4.7"
-grep-cli = "0.1.10"
-itermore = { version = "0.7.1", default-features = false, features = [
+ignore = "0.4.25"
+itermore = { version = "0.8.0", default-features = false, features = [
     "array_chunks",
+    "array_windows",
 ] }
-lazy_static = "1.4.0"
-memchr = "2.7.2"
-memmap2 = "0.9.4"
-microtemplate = "1.0.3"
-regex = "1.10.4"
-serde_json = "1.0.116"
+memchr = "2.7.6"
+memmap2 = "0.9.9"
+serde_json = "1.0.149"
 termcolor = "1.4.1"
-zstd = "0.13.1"
+thiserror = "2.0.17"
+zstd = "0.13.3"
+
+[dev-dependencies]
+criterion = { version = "0.8.1", features = ["html_reports"] }
+fake = { version = "4", features = ["derive"] }
+proptest = "1.4"
+rand = "0.9.2"
+tempfile = "3"
+
+[[bench]]
+name = "search_bench"
+harness = false
